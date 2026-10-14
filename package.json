@@ -1,7 +1,7 @@
 {
   "name": "nova",
   "version": "0.1.0",
-  "description": "Lightweight AI notepad core — IntentService + EditorShell.",
+  "description": "Lightweight AI notepad core — IntentService + EditorShell + FindBar.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
