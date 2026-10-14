@@ -28,6 +28,19 @@ export {
   MAX_SUGGESTIONS,
 } from "./suggestions.js";
 export type { Suggestion } from "./suggestions.js";
+export { runTenSecondDemo } from "./ten-second-demo.js";
+export type {
+  TenSecondDemoOptions,
+  TenSecondDemoResult,
+} from "./ten-second-demo.js";
+export {
+  runWindowsGates,
+  LARGE_FILE_CHARS,
+  COLD_START_MAX_MS,
+  HOTKEY_EVOKE_MAX_MS,
+  LARGE_FILE_MAX_MS,
+} from "./windows-gates.js";
+export type { GateResult, WindowsGatesReport } from "./windows-gates.js";
 export {
   decodeBytes,
   encodeText,
