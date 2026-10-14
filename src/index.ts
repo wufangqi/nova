@@ -1,4 +1,11 @@
 export { IntentService } from "./intent-service.js";
+export { IntentIpcHost } from "./ipc/host.js";
+export type {
+  IpcMethod,
+  IpcRequest,
+  IpcResponse,
+  AcceptIpcResult,
+} from "./ipc/protocol.js";
 export {
   buildExplanation,
   isExplainUtterance,

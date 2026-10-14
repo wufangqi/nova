@@ -1,0 +1,81 @@
+:root {
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  font-size: 15px;
+  color: #1a1a1a;
+  background: #f3f1ec;
+  line-height: 1.45;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 3rem;
+}
+
+h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.75rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 0 0 1.5rem;
+  color: #4a4a4a;
+}
+
+.panel {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+label {
+  font-weight: 600;
+}
+
+textarea {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #c8c4bb;
+  border-radius: 4px;
+  background: #fff;
+  font: inherit;
+  resize: vertical;
+}
+
+button {
+  justify-self: start;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid #2b2b2b;
+  border-radius: 4px;
+  background: #2b2b2b;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.output {
+  margin: 1.25rem 0 0;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  border: 1px solid #c8c4bb;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 6rem;
+}

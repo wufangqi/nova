@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nova</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <main class="container">
+      <h1>Nova</h1>
+      <p class="lede">
+        WUF-81 smoke: create Buffer → Accept hand-crafted Patch via IntentService IPC.
+      </p>
+
+      <section class="panel">
+        <label for="buffer-text">Initial Buffer text</label>
+        <textarea id="buffer-text" rows="3">hello world</textarea>
+        <button type="button" id="create-buffer">Create Buffer</button>
+      </section>
+
+      <section class="panel">
+        <button type="button" id="accept-patch" disabled>
+          Accept Patch (world → nova)
+        </button>
+      </section>
+
+      <pre id="output" class="output" aria-live="polite"></pre>
+    </main>
+  </body>
+</html>
