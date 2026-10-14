@@ -24,6 +24,11 @@ export { EditorShell } from "./editor-shell.js";
 export { FindBar } from "./find-bar.js";
 export { MojibakeRepair } from "./mojibake-repair.js";
 export {
+  ClipboardSuggestions,
+  MAX_SUGGESTIONS,
+} from "./suggestions.js";
+export type { Suggestion } from "./suggestions.js";
+export {
   decodeBytes,
   encodeText,
   detectBom,
