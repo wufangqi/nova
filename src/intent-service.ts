@@ -4,13 +4,25 @@ import type {
   BufferCreateOptions,
   BufferId,
   BufferSnapshot,
+  Cost,
   Eol,
+  Intent,
+  IntentServiceOptions,
   MainHistoryEntry,
+  Outbound,
+  ParseInput,
   Patch,
+  PreviewId,
+  PreviewResult,
   ProvenanceAuditEntry,
+  ResolvedScope,
   TextEdit,
   UndoGroupId,
 } from "./types.js";
+
+const DEFAULT_VISIBLE_SAMPLE_CHARS = 4096;
+const MODEL_UNAVAILABLE_GUIDANCE =
+  "No local model is installed. Install a local model to run AI Intents, or enable a cloud path. Buffer editing and FindBar still work offline.";
 
 interface BufferState {
   id: BufferId;
@@ -124,16 +136,79 @@ function applyEdits(text: string, edits: RelocatedEdit[]): string {
   return out;
 }
 
+function clampRange(
+  start: number,
+  end: number,
+  length: number,
+): { start: number; end: number } | null {
+  if (start < 0 || end < start || end > length) return null;
+  return { start, end };
+}
+
+function resolveScope(
+  text: string,
+  input: ParseInput,
+  sampleChars: number,
+): { scope: ResolvedScope; scopeLabel: string } {
+  const sel = input.selection;
+  if (sel) {
+    const r = clampRange(sel.start, sel.end, text.length);
+    if (!r) throw new Error("invalid Selection");
+    return {
+      scope: { kind: "selection", start: r.start, end: r.end },
+      scopeLabel: `Selection ${r.start}…${r.end}`,
+    };
+  }
+
+  const win = input.visibleWindow;
+  if (win) {
+    const r = clampRange(win.start, win.end, text.length);
+    if (!r) throw new Error("invalid visible window");
+    return {
+      scope: {
+        kind: "visible",
+        start: r.start,
+        end: r.end,
+        sampled: false,
+      },
+      scopeLabel: `Visible window ${r.start}…${r.end}`,
+    };
+  }
+
+  // Default: visible sample — never silently the whole Buffer for large text.
+  const end = Math.min(text.length, Math.max(0, sampleChars));
+  return {
+    scope: { kind: "visible", start: 0, end, sampled: true },
+    scopeLabel: `Visible sample 0…${end}`,
+  };
+}
+
+function scopeSlice(text: string, scope: ResolvedScope): string {
+  return text.slice(scope.start, scope.end);
+}
+
 /**
  * IntentService — single Accept write seam for proposal Patches.
  * WUF-70: Buffer + accept / undo / dual-track Provenance.
  * WUF-73: Encoding/EOL/BOM metadata; Accept mutates them only when Patch.metadata is set.
+ * WUF-74: parse / preview / reject stub (deterministic; optional cloud Outbound).
  */
 export class IntentService {
   private buffers = new Map<BufferId, BufferState>();
   private undoGroups = new Map<UndoGroupId, UndoGroupRecord>();
   private mainHistory = new Map<BufferId, MainHistoryEntry[]>();
   private audit = new Map<BufferId, ProvenanceAuditEntry[]>();
+  private outstandingPreviews = new Map<PreviewId, true>();
+  private readonly modelAvailable: boolean;
+  private readonly cloudEnabled: boolean;
+  private readonly visibleSampleChars: number;
+
+  constructor(options: IntentServiceOptions = {}) {
+    this.modelAvailable = options.modelAvailable ?? true;
+    this.cloudEnabled = options.cloudEnabled ?? false;
+    this.visibleSampleChars =
+      options.visibleSampleChars ?? DEFAULT_VISIBLE_SAMPLE_CHARS;
+  }
 
   createBuffer(text = "", options: BufferCreateOptions = {}): BufferSnapshot {
     const id = randomUUID();
@@ -181,6 +256,134 @@ export class IntentService {
     if (meta.bom !== undefined) b.bom = meta.bom;
     b.revision += 1;
     return snapshot(b);
+  }
+
+  /**
+   * Natural language + Buffer (+ optional Selection / visible window) → Intent.
+   * Scope defaults to visible sample when no Selection (never silent whole-Buffer).
+   */
+  parse(input: ParseInput): Intent {
+    const buf = this.buffers.get(input.bufferId);
+    if (!buf) throw new Error(`unknown Buffer: ${input.bufferId}`);
+    const { scope, scopeLabel } = resolveScope(
+      buf.text,
+      input,
+      this.visibleSampleChars,
+    );
+    return {
+      id: randomUUID(),
+      bufferId: buf.id,
+      utterance: input.utterance,
+      scope,
+      scopeLabel,
+    };
+  }
+
+  /**
+   * Deterministic stub preview: Cost always present; Outbound when cloudEnabled.
+   * Missing local model ⇒ structured error with install guidance (ADR-0003).
+   */
+  preview(intent: Intent): PreviewResult {
+    const buf = this.buffers.get(intent.bufferId);
+    if (!buf) throw new Error(`unknown Buffer: ${intent.bufferId}`);
+
+    if (!this.modelAvailable) {
+      return {
+        kind: "error",
+        reason: "model_unavailable",
+        guidance: MODEL_UNAVAILABLE_GUIDANCE,
+      };
+    }
+
+    const scoped = scopeSlice(buf.text, intent.scope);
+    const utterance = intent.utterance.trim().toLowerCase();
+    const previewId = randomUUID();
+    this.outstandingPreviews.set(previewId, true);
+
+    const outbound: Outbound[] | undefined = this.cloudEnabled
+      ? [
+          {
+            task: "transform",
+            text: scoped,
+            destination: "cloud",
+          },
+        ]
+      : undefined;
+
+    const cost: Cost = {
+      latencyMsEstimate: this.cloudEnabled ? 400 : 40,
+      tokensEstimate: Math.max(1, Math.ceil(scoped.length / 4)),
+      hasOutbound: Boolean(outbound?.length),
+    };
+
+    if (utterance.startsWith("explain")) {
+      return {
+        kind: "explanation",
+        previewId,
+        explanation: {
+          summary: `Stub explanation of ${scoped.length} chars in Scope.`,
+          anchors: scoped.length
+            ? [
+                {
+                  start: intent.scope.start,
+                  end: intent.scope.end,
+                  note: "scope",
+                },
+              ]
+            : [],
+        },
+        cost,
+        outbound,
+      };
+    }
+
+    if (utterance.startsWith("regex ")) {
+      const pattern = intent.utterance.trim().slice("regex ".length);
+      return {
+        kind: "regex_draft",
+        previewId,
+        draft: { pattern, flags: "g" },
+        cost,
+        outbound,
+      };
+    }
+
+    // Default stub transform: uppercase the Scope (covers "uppercase" demos).
+    const replacement = scoped.toUpperCase();
+    const patch: Patch = {
+      bufferId: buf.id,
+      baseRevision: buf.revision,
+      edits: [
+        {
+          start: intent.scope.start,
+          end: intent.scope.end,
+          replacement,
+          before:
+            intent.scope.start > 0
+              ? buf.text.slice(Math.max(0, intent.scope.start - 8), intent.scope.start)
+              : "",
+          after: buf.text.slice(
+            intent.scope.end,
+            Math.min(buf.text.length, intent.scope.end + 8),
+          ),
+        },
+      ],
+      provenance: { source: "ai", label: "stub" },
+      intentId: intent.id,
+    };
+
+    return {
+      kind: "patches",
+      previewId,
+      patches: [patch],
+      cost,
+      outbound,
+    };
+  }
+
+  /** Discard an outstanding preview; Buffer is never mutated. */
+  reject(previewId: PreviewId): void {
+    this.outstandingPreviews.delete(previewId);
   }
 
   accept(patches: Patch[]): AcceptResult {

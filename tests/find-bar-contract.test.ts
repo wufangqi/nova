@@ -135,6 +135,14 @@ describe("FindBar works without chat / Intent", () => {
     const buf = intent.createBuffer("hello world");
     const bar = new FindBar(intent);
 
+    // FindBar must stay deterministic — do not route through Intent parse/preview.
+    intent.parse = () => {
+      throw new Error("FindBar must not call parse");
+    };
+    intent.preview = () => {
+      throw new Error("FindBar must not call preview");
+    };
+
     const hits = bar.find({ bufferId: buf.id, pattern: "world" });
     assert.equal(hits.count, 1);
 
@@ -145,11 +153,5 @@ describe("FindBar works without chat / Intent", () => {
     });
     assert.equal(result.ok, true);
     assert.equal(intent.getBuffer(buf.id).text, "hello nova");
-
-    // IntentService has no parse/preview yet — FindBar must not require them.
-    assert.equal(
-      typeof (intent as { parse?: unknown }).parse,
-      "undefined",
-    );
   });
 });

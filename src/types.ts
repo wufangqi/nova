@@ -91,3 +91,108 @@ export interface BufferCreateOptions {
   eol?: Eol;
   bom?: boolean;
 }
+
+/** WUF-74 — Intent parse / preview seam. */
+
+export type PreviewId = string;
+
+/** Continuous range in a Buffer (may be empty = caret). */
+export interface Selection {
+  start: number;
+  end: number;
+}
+
+/** Currently visible window into a Buffer (UI viewport). */
+export interface VisibleWindow {
+  start: number;
+  end: number;
+}
+
+/**
+ * Scope resolved for one Intent — always bounded and user-visible.
+ * Default without Selection: visible window, or a sample of the Buffer.
+ */
+export type ResolvedScope =
+  | { kind: "selection"; start: number; end: number }
+  | { kind: "visible"; start: number; end: number; sampled: boolean }
+  | { kind: "buffer"; start: number; end: number };
+
+export interface Intent {
+  id: IntentId;
+  bufferId: BufferId;
+  utterance: string;
+  scope: ResolvedScope;
+  /** Human-visible description of Scope (must not be empty). */
+  scopeLabel: string;
+}
+
+export interface Cost {
+  latencyMsEstimate: number;
+  tokensEstimate: number;
+  hasOutbound: boolean;
+}
+
+export interface Outbound {
+  task: string;
+  text: string;
+  destination: "cloud";
+}
+
+export interface Explanation {
+  summary: string;
+  anchors: Array<{ start: number; end: number; note: string }>;
+}
+
+export interface RegexDraft {
+  pattern: string;
+  replacement?: string;
+  flags?: string;
+}
+
+export type PreviewOk =
+  | {
+      kind: "patches";
+      previewId: PreviewId;
+      patches: Patch[];
+      cost: Cost;
+      outbound?: Outbound[];
+    }
+  | {
+      kind: "explanation";
+      previewId: PreviewId;
+      explanation: Explanation;
+      cost: Cost;
+      outbound?: Outbound[];
+    }
+  | {
+      kind: "regex_draft";
+      previewId: PreviewId;
+      draft: RegexDraft;
+      cost: Cost;
+      outbound?: Outbound[];
+    };
+
+export type PreviewFail = {
+  kind: "error";
+  reason: "model_unavailable";
+  guidance: string;
+};
+
+export type PreviewResult = PreviewOk | PreviewFail;
+
+export interface ParseInput {
+  bufferId: BufferId;
+  utterance: string;
+  selection?: Selection;
+  /** Current visible window; when absent and no Selection, sample is used. */
+  visibleWindow?: VisibleWindow;
+}
+
+export interface IntentServiceOptions {
+  /** When false, AI preview fails with install guidance (ADR-0003). Default true. */
+  modelAvailable?: boolean;
+  /** When true, stub routes via cloud and surfaces Outbound. Default false. */
+  cloudEnabled?: boolean;
+  /** Max chars for default visible sample. Default 4096. */
+  visibleSampleChars?: number;
+}
