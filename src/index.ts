@@ -5,6 +5,12 @@ export {
   resolveAnchor,
 } from "./explanation.js";
 export {
+  buildRegexDraft,
+  isRegexDraftUtterance,
+  flagsFromDraft,
+  draftFlagsString,
+} from "./regex-draft.js";
+export {
   LocalModelGateway,
   validateModelPatchOutput,
 } from "./model-gateway.js";

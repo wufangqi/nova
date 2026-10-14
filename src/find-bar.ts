@@ -5,10 +5,15 @@ import {
   type PcreFlags,
   PcreCompileError,
 } from "./pcre.js";
+import {
+  draftFlagsString,
+  flagsFromDraft,
+} from "./regex-draft.js";
 import type {
   AcceptResult,
   BufferId,
   Patch,
+  RegexDraft,
   TextEdit,
 } from "./types.js";
 
@@ -33,19 +38,21 @@ export interface FindResult {
 export type PreviewReplaceOk = { ok: true; patches: Patch[] };
 export type PreviewReplaceFail = {
   ok: false;
-  reason: "invalid_pattern" | "no_matches" | "invalid_scope";
+  reason: "invalid_pattern" | "no_matches" | "invalid_scope" | "no_pattern";
 };
 export type PreviewReplaceResult = PreviewReplaceOk | PreviewReplaceFail;
 
 export interface FindInput {
   bufferId: BufferId;
-  pattern: string;
+  /** When omitted, uses the draft loaded via `applyDraft` / setters. */
+  pattern?: string;
   scope?: TextScope;
   flags?: PcreFlags;
 }
 
 export interface ReplaceInput extends FindInput {
-  replacement: string;
+  /** When omitted, uses the loaded draft replacement. */
+  replacement?: string;
 }
 
 function resolveScope(
@@ -89,46 +96,108 @@ function matchInScope(
 /**
  * Deterministic FindBar: PCRE find + replace-over-Scope → Patch.
  * Writes only through IntentService.accept — never mutates Buffer itself.
+ * RegexDraft (WUF-77) populates this surface; replace is an explicit second step.
  */
 export class FindBar {
+  private pattern = "";
+  private replacement = "";
+  private flags: PcreFlags = {};
+
   constructor(private readonly intent: IntentService) {}
 
+  /** Fill FindBar from an Intent RegexDraft. Does not touch Buffer. */
+  applyDraft(draft: RegexDraft): void {
+    this.pattern = draft.pattern;
+    this.replacement = draft.replacement ?? "";
+    const parsed = flagsFromDraft(draft.flags);
+    this.flags = { i: parsed.i, m: parsed.m, s: parsed.s };
+  }
+
+  /** Current FindBar fields as a RegexDraft (shared surface with Intent preview). */
+  getDraft(): RegexDraft {
+    return {
+      pattern: this.pattern,
+      replacement: this.replacement || undefined,
+      flags: draftFlagsString(this.flags),
+    };
+  }
+
+  /** User refine after NL fill — pattern only. */
+  setPattern(pattern: string): void {
+    this.pattern = pattern;
+  }
+
+  setReplacement(replacement: string): void {
+    this.replacement = replacement;
+  }
+
+  setFlags(flags: PcreFlags): void {
+    this.flags = { ...flags };
+  }
+
+  private resolvePattern(input: FindInput): string | null {
+    const p = input.pattern ?? this.pattern;
+    return p.length > 0 ? p : null;
+  }
+
+  private resolveFlags(input: FindInput): PcreFlags {
+    return input.flags ?? this.flags;
+  }
+
+  private resolveReplacement(input: ReplaceInput): string {
+    return input.replacement ?? this.replacement;
+  }
+
   find(input: FindInput): FindResult {
+    const pattern = this.resolvePattern(input);
+    if (!pattern) return { hits: [], count: 0 };
+
     const buf = this.intent.getBuffer(input.bufferId);
     const span = resolveScope(buf.text, input.scope);
     if (!span) return { hits: [], count: 0 };
 
     const hits: FindHit[] = [];
-    matchInScope(buf.text, span, input.pattern, input.flags, (m, start, end) => {
-      const groups: Record<number, string> = {};
-      for (let g = 1; g < m.length; g++) {
-        if (m[g] !== undefined) groups[g] = m[g]!;
-      }
-      hits.push({ start, end, match: m[0] ?? "", groups });
-    });
+    matchInScope(
+      buf.text,
+      span,
+      pattern,
+      this.resolveFlags(input),
+      (m, start, end) => {
+        const groups: Record<number, string> = {};
+        for (let g = 1; g < m.length; g++) {
+          if (m[g] !== undefined) groups[g] = m[g]!;
+        }
+        hits.push({ start, end, match: m[0] ?? "", groups });
+      },
+    );
     return { hits, count: hits.length };
   }
 
   /**
    * Build Patch[] for replace-over-Scope. Does not Accept / mutate Buffer.
+   * Pattern/replacement come from input or the loaded RegexDraft.
    */
   previewReplace(input: ReplaceInput): PreviewReplaceResult {
+    const pattern = this.resolvePattern(input);
+    if (!pattern) return { ok: false, reason: "no_pattern" };
+
     const buf = this.intent.getBuffer(input.bufferId);
     const span = resolveScope(buf.text, input.scope);
     if (!span) return { ok: false, reason: "invalid_scope" };
 
+    const replacement = this.resolveReplacement(input);
     const edits: TextEdit[] = [];
     try {
       matchInScope(
         buf.text,
         span,
-        input.pattern,
-        input.flags,
+        pattern,
+        this.resolveFlags(input),
         (m, start, end) => {
           edits.push({
             start,
             end,
-            replacement: expandReplacement(input.replacement, m),
+            replacement: expandReplacement(replacement, m),
             before: buf.text.slice(Math.max(0, start - 8), start),
             after: buf.text.slice(end, Math.min(buf.text.length, end + 8)),
           });

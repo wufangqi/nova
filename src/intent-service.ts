@@ -9,6 +9,10 @@ import {
   validateModelPatchOutput,
   type ModelGateway,
 } from "./model-gateway.js";
+import {
+  buildRegexDraft,
+  isRegexDraftUtterance,
+} from "./regex-draft.js";
 import type {
   AcceptResult,
   AnchorResolveResult,
@@ -208,6 +212,7 @@ function scopeSlice(text: string, scope: ResolvedScope): string {
  * WUF-74: parse / preview / reject (Cost, Scope, Outbound, no-model guidance).
  * WUF-75: transform Intents via model gateway + deterministic validator.
  * WUF-76: Explanation previews + safe anchor resolve (no Buffer mutation).
+ * WUF-77: NL → RegexDraft (FindBar fill only; replace is an explicit later step).
  */
 export class IntentService {
   private buffers = new Map<BufferId, BufferState>();
@@ -318,7 +323,6 @@ export class IntentService {
     }
 
     const scoped = scopeSlice(buf.text, intent.scope);
-    const utterance = intent.utterance.trim().toLowerCase();
     const previewId = randomUUID();
     this.outstandingPreviews.set(previewId, true);
 
@@ -356,14 +360,19 @@ export class IntentService {
       };
     }
 
-    if (utterance.startsWith("regex ")) {
-      const pattern = intent.utterance.trim().slice("regex ".length);
+    if (isRegexDraftUtterance(intent.utterance)) {
+      // RegexDraft only populates FindBar — never Accepts into Buffer text.
       return {
         kind: "regex_draft",
         previewId,
-        draft: { pattern, flags: "g" },
-        cost,
-        outbound,
+        draft: buildRegexDraft(intent.utterance),
+        cost: {
+          ...cost,
+          latencyMsEstimate: this.cloudEnabled ? 280 : 15,
+        },
+        outbound: outbound
+          ? outbound.map((o) => ({ ...o, task: "regex_draft" }))
+          : undefined,
       };
     }
 

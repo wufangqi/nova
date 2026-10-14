@@ -1,7 +1,7 @@
 /**
  * PCRE-flavored compile / replace helpers for FindBar.
  * Engine: ECMAScript RegExp (lookaround, named groups, unicode) — the shared
- * dialect FindBar and future RegexDraft populate. True libpcre can swap later
+ * dialect FindBar and RegexDraft populate. True libpcre can swap later
  * behind this seam without changing callers.
  */
 
