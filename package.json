@@ -1,7 +1,7 @@
 {
   "name": "nova",
   "version": "0.1.0",
-  "description": "Lightweight AI notepad core — IntentService Accept seam.",
+  "description": "Lightweight AI notepad core — IntentService + EditorShell.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,7 +13,9 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "notepad": "tsx src/cli/notepad.ts",
+    "notepad:demo": "tsx src/cli/notepad-demo.ts"
   },
   "license": "UNLICENSED",
   "private": true,
