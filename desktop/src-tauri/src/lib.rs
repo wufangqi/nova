@@ -1,11 +1,11 @@
 mod intent_bridge;
 
 use intent_bridge::{
-    accept, activate_tab, confirm_close, create_buffer, edit_active, evoke, get_buffer,
-    get_shell_state, get_suggestions_enabled, list_tabs, open_path, preview_intent,
-    reject_preview, request_close, resolve_explanation_anchor, save_active, save_active_as,
-    select_suggestion, set_cloud_enabled, set_suggestions_enabled, suggestions_for_paste, undo,
-    IntentBridge, SharedBridge,
+    accept, activate_tab, apply_draft, confirm_close, create_buffer, edit_active, evoke, find,
+    get_buffer, get_draft, get_shell_state, get_suggestions_enabled, list_tabs, open_path,
+    preview_intent, preview_replace, reject_preview, replace_accept, request_close,
+    resolve_explanation_anchor, save_active, save_active_as, select_suggestion, set_cloud_enabled,
+    set_suggestions_enabled, suggestions_for_paste, undo, IntentBridge, SharedBridge,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -177,6 +177,44 @@ fn select_suggestion_cmd(
     select_suggestion(&bridge, suggestion, selection)
 }
 
+
+#[tauri::command]
+fn find_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    find(&bridge, params.unwrap_or(Value::Object(Default::default())))
+}
+
+#[tauri::command]
+fn preview_replace_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    preview_replace(&bridge, params.unwrap_or(Value::Object(Default::default())))
+}
+
+#[tauri::command]
+fn replace_accept_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    replace_accept(&bridge, params.unwrap_or(Value::Object(Default::default())))
+}
+
+#[tauri::command]
+fn apply_draft_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    draft: Value,
+) -> Result<Value, String> {
+    apply_draft(&bridge, draft)
+}
+
+#[tauri::command]
+fn get_draft_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String> {
+    get_draft(&bridge)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -210,7 +248,12 @@ pub fn run() {
             get_suggestions_enabled_cmd,
             set_suggestions_enabled_cmd,
             suggestions_for_paste_cmd,
-            select_suggestion_cmd
+            select_suggestion_cmd,
+            find_cmd,
+            preview_replace_cmd,
+            replace_accept_cmd,
+            apply_draft_cmd,
+            get_draft_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

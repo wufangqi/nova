@@ -1,6 +1,6 @@
 /**
- * WUF-81/82/84 — Tauri IPC request/response shapes.
- * Thin facade over IntentService + EditorShell; no alternate Accept path.
+ * WUF-81/82/84/85/86 — Tauri IPC request/response shapes.
+ * Thin facade over IntentService + EditorShell + FindBar; no alternate Accept path.
  */
 import type {
   AcceptResult,
@@ -12,11 +12,18 @@ import type {
   Patch,
   PreviewId,
   PreviewResult,
+  RegexDraft,
   Selection,
   UndoGroupId,
   VisibleWindow,
 } from "../types.js";
 import type { CloseResult, TabInfo } from "../editor-shell.js";
+import type {
+  FindHit,
+  PreviewReplaceResult,
+  TextScope,
+} from "../find-bar.js";
+import type { PcreFlags } from "../pcre.js";
 import type { Suggestion } from "../suggestions.js";
 
 export type IpcMethod =
@@ -41,7 +48,12 @@ export type IpcMethod =
   | "get_suggestions_enabled"
   | "set_suggestions_enabled"
   | "suggestions_for_paste"
-  | "select_suggestion";
+  | "select_suggestion"
+  | "find"
+  | "preview_replace"
+  | "replace_accept"
+  | "apply_draft"
+  | "get_draft";
 
 export type CreateBufferRequest = {
   method: "create_buffer";
@@ -168,6 +180,41 @@ export type SelectSuggestionRequest = {
   };
 };
 
+
+/** Shared FindBar params — omit fields to use the loaded draft / active Buffer. */
+export type FindBarParams = {
+  bufferId?: string;
+  pattern?: string;
+  replacement?: string;
+  flags?: PcreFlags;
+  scope?: TextScope;
+};
+
+export type FindRequest = {
+  method: "find";
+  params: FindBarParams;
+};
+
+export type PreviewReplaceRequest = {
+  method: "preview_replace";
+  params: FindBarParams;
+};
+
+export type ReplaceAcceptRequest = {
+  method: "replace_accept";
+  params: FindBarParams;
+};
+
+export type ApplyDraftRequest = {
+  method: "apply_draft";
+  params: { draft: RegexDraft };
+};
+
+export type GetDraftRequest = {
+  method: "get_draft";
+  params: Record<string, never> | {};
+};
+
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
@@ -190,7 +237,12 @@ export type IpcRequest =
   | GetSuggestionsEnabledRequest
   | SetSuggestionsEnabledRequest
   | SuggestionsForPasteRequest
-  | SelectSuggestionRequest;
+  | SelectSuggestionRequest
+  | FindRequest
+  | PreviewReplaceRequest
+  | ReplaceAcceptRequest
+  | ApplyDraftRequest
+  | GetDraftRequest;
 
 export type IpcOk<T> = { ok: true; result: T };
 export type IpcErr = { ok: false; error: string };
@@ -263,4 +315,33 @@ export type SelectSuggestionResult = {
   tabs: TabInfo[];
   /** Utterance that entered Intent/preview (from the Suggestion). */
   utterance: string;
+};
+
+export type FindIpcResult = {
+  hits: FindHit[];
+  count: number;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type PreviewReplaceIpcResult = {
+  preview: PreviewReplaceResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type ReplaceAcceptIpcResult = {
+  accept: AcceptResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type ApplyDraftIpcResult = {
+  draft: RegexDraft;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type GetDraftIpcResult = {
+  draft: RegexDraft;
 };

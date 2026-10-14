@@ -1,9 +1,10 @@
 /**
- * IntentIpcHost — deep IntentService + EditorShell behind a small IPC interface.
- * All Accept writes go through IntentService.accept only.
+ * IntentIpcHost — deep IntentService + EditorShell + FindBar behind a small IPC interface.
+ * All Accept writes go through IntentService.accept only (FindBar.replaceAccept included).
  * WUF-86: Explanation anchor resolve + ClipboardSuggestions (default off).
  */
 import { EditorShell } from "../editor-shell.js";
+import { FindBar } from "../find-bar.js";
 import { IntentService } from "../intent-service.js";
 import { ClipboardSuggestions } from "../suggestions.js";
 import type { IntentServiceOptions } from "../types.js";
@@ -11,13 +12,20 @@ import type {
   AcceptIpcResult,
   AcceptRequest,
   ActivateTabRequest,
+  ApplyDraftIpcResult,
+  ApplyDraftRequest,
   ConfirmCloseRequest,
   CreateBufferRequest,
   CreateBufferResult,
   EditActiveRequest,
   EvokeRequest,
+  FindBarParams,
+  FindIpcResult,
+  FindRequest,
   GetBufferRequest,
   GetBufferResult,
+  GetDraftIpcResult,
+  GetDraftRequest,
   GetShellStateRequest,
   GetSuggestionsEnabledRequest,
   IpcRequest,
@@ -26,8 +34,12 @@ import type {
   OpenPathRequest,
   PreviewIntentRequest,
   PreviewIntentResult,
+  PreviewReplaceIpcResult,
+  PreviewReplaceRequest,
   RejectPreviewRequest,
   RejectPreviewResult,
+  ReplaceAcceptIpcResult,
+  ReplaceAcceptRequest,
   RequestCloseRequest,
   ResolveExplanationAnchorRequest,
   ResolveExplanationAnchorResult,
@@ -52,11 +64,13 @@ import type {
 export class IntentIpcHost {
   readonly service: IntentService;
   readonly shell: EditorShell;
+  readonly findBar: FindBar;
   readonly suggestions: ClipboardSuggestions;
 
   constructor(options: IntentServiceOptions = {}) {
     this.service = new IntentService(options);
     this.shell = new EditorShell(this.service);
+    this.findBar = new FindBar(this.service);
     this.suggestions = new ClipboardSuggestions(this.service);
   }
 
@@ -92,6 +106,11 @@ export class IntentIpcHost {
   handle(
     request: SelectSuggestionRequest,
   ): Promise<IpcResponse<SelectSuggestionResult>>;
+  handle(request: FindRequest): Promise<IpcResponse<FindIpcResult>>;
+  handle(request: PreviewReplaceRequest): Promise<IpcResponse<PreviewReplaceIpcResult>>;
+  handle(request: ReplaceAcceptRequest): Promise<IpcResponse<ReplaceAcceptIpcResult>>;
+  handle(request: ApplyDraftRequest): Promise<IpcResponse<ApplyDraftIpcResult>>;
+  handle(request: GetDraftRequest): Promise<IpcResponse<GetDraftIpcResult>>;
   handle(request: IpcRequest): Promise<IpcResponse<unknown>>;
   async handle(request: IpcRequest): Promise<IpcResponse<unknown>> {
     try {
@@ -308,6 +327,89 @@ export class IntentIpcHost {
             } satisfies SelectSuggestionResult,
           };
         }
+        case "find": {
+          const bufferId = this.resolveFindBufferId(request.params);
+          if (!bufferId) {
+            return { ok: false, error: "no active Buffer for FindBar" };
+          }
+          const found = this.findBar.find({
+            bufferId,
+            pattern: request.params.pattern,
+            flags: request.params.flags,
+            scope: request.params.scope,
+          });
+          return {
+            ok: true,
+            result: {
+              hits: found.hits,
+              count: found.count,
+              buffer: this.service.getBuffer(bufferId),
+              tabs: this.shell.listTabs(),
+            } satisfies FindIpcResult,
+          };
+        }
+        case "preview_replace": {
+          const bufferId = this.resolveFindBufferId(request.params);
+          if (!bufferId) {
+            return { ok: false, error: "no active Buffer for FindBar replace" };
+          }
+          const preview = this.findBar.previewReplace({
+            bufferId,
+            pattern: request.params.pattern,
+            replacement: request.params.replacement,
+            flags: request.params.flags,
+            scope: request.params.scope,
+          });
+          return {
+            ok: true,
+            result: {
+              preview,
+              buffer: this.service.getBuffer(bufferId),
+              tabs: this.shell.listTabs(),
+            } satisfies PreviewReplaceIpcResult,
+          };
+        }
+        case "replace_accept": {
+          const bufferId = this.resolveFindBufferId(request.params);
+          if (!bufferId) {
+            return { ok: false, error: "no active Buffer for FindBar replace" };
+          }
+          const accept = this.findBar.replaceAccept({
+            bufferId,
+            pattern: request.params.pattern,
+            replacement: request.params.replacement,
+            flags: request.params.flags,
+            scope: request.params.scope,
+          });
+          return {
+            ok: true,
+            result: {
+              accept,
+              buffer: this.service.getBuffer(bufferId),
+              tabs: this.shell.listTabs(),
+            } satisfies ReplaceAcceptIpcResult,
+          };
+        }
+        case "apply_draft": {
+          const id = this.shell.activeBufferId;
+          if (!id) {
+            return { ok: false, error: "no active Buffer for FindBar draft" };
+          }
+          this.findBar.applyDraft(request.params.draft);
+          return {
+            ok: true,
+            result: {
+              draft: this.findBar.getDraft(),
+              buffer: this.service.getBuffer(id),
+              tabs: this.shell.listTabs(),
+            } satisfies ApplyDraftIpcResult,
+          };
+        }
+        case "get_draft":
+          return {
+            ok: true,
+            result: { draft: this.findBar.getDraft() } satisfies GetDraftIpcResult,
+          };
         default: {
           const _exhaustive: never = request;
           return { ok: false, error: `unknown method: ${String(_exhaustive)}` };
@@ -317,5 +419,9 @@ export class IntentIpcHost {
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, error: message };
     }
+  }
+
+  private resolveFindBufferId(params: FindBarParams): string | null {
+    return params.bufferId ?? this.shell.activeBufferId;
   }
 }
