@@ -1,4 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  chooseSaveAction,
+  pathInputValueForActive,
+} from "./path-toolbar.ts";
 
 type BufferSnapshot = {
   id: string;
@@ -79,8 +83,8 @@ function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
   editor.value = buffer?.text ?? "";
   applyingRemote = false;
   const active = tabs.find((t) => t.active);
-  if (active?.path) pathInput.value = active.path;
-  else if (!active) pathInput.value = "";
+  // Always sync — untitled must clear so Save cannot reuse another tab's Path.
+  pathInput.value = pathInputValueForActive(active);
 }
 
 async function evoke() {
@@ -121,21 +125,23 @@ async function openPath() {
 
 async function save() {
   const pathInput = el<HTMLInputElement>("path-input");
-  const path = pathInput.value.trim();
   const tabs = await invoke<ShellTabsResult>("list_tabs_cmd");
   const active = tabs.tabs.find((t) => t.active);
+  const action = chooseSaveAction(active, pathInput.value);
   try {
     let result: ShellTabsResult;
-    if (!active || active.untitled || (path && path !== active.path)) {
-      if (!path) {
-        setStatus("Enter a Path to save (untitled Buffer needs save-as)");
-        return;
-      }
-      result = await invoke<ShellTabsResult>("save_active_as_cmd", { path });
-      setStatus(`Saved as ${path}`);
-    } else {
+    if (action === "need_path") {
+      setStatus("Enter a Path to save (untitled Buffer needs save-as)");
+      return;
+    }
+    if (action === "save") {
       result = await invoke<ShellTabsResult>("save_active_cmd");
-      setStatus(`Saved ${active.path}`);
+      setStatus(`Saved ${active!.path}`);
+    } else {
+      result = await invoke<ShellTabsResult>("save_active_as_cmd", {
+        path: action.saveAs,
+      });
+      setStatus(`Saved as ${action.saveAs}`);
     }
     const state = await invoke<ShellStateResult>("get_shell_state_cmd");
     applyState(state.buffer, result.tabs);
