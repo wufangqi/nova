@@ -1,6 +1,10 @@
 mod intent_bridge;
 
-use intent_bridge::{accept, create_buffer, get_buffer, IntentBridge, SharedBridge};
+use intent_bridge::{
+    accept, activate_tab, confirm_close, create_buffer, edit_active, evoke, get_buffer,
+    get_shell_state, list_tabs, open_path, request_close, save_active, save_active_as,
+    IntentBridge, SharedBridge,
+};
 use serde_json::Value;
 use std::sync::Mutex;
 use tauri::Manager;
@@ -29,6 +33,74 @@ fn accept_cmd(
     accept(&bridge, patches)
 }
 
+#[tauri::command]
+fn evoke_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String> {
+    evoke(&bridge)
+}
+
+#[tauri::command]
+fn list_tabs_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String> {
+    list_tabs(&bridge)
+}
+
+#[tauri::command]
+fn activate_tab_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    activate_tab(&bridge, id)
+}
+
+#[tauri::command]
+fn edit_active_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    text: String,
+) -> Result<Value, String> {
+    edit_active(&bridge, text)
+}
+
+#[tauri::command]
+fn open_path_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    path: String,
+) -> Result<Value, String> {
+    open_path(&bridge, path)
+}
+
+#[tauri::command]
+fn save_active_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String> {
+    save_active(&bridge)
+}
+
+#[tauri::command]
+fn save_active_as_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    path: String,
+) -> Result<Value, String> {
+    save_active_as(&bridge, path)
+}
+
+#[tauri::command]
+fn request_close_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    request_close(&bridge, id)
+}
+
+#[tauri::command]
+fn confirm_close_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    confirm_close(&bridge, id)
+}
+
+#[tauri::command]
+fn get_shell_state_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String> {
+    get_shell_state(&bridge)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -43,7 +115,17 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             create_buffer_cmd,
             get_buffer_cmd,
-            accept_cmd
+            accept_cmd,
+            evoke_cmd,
+            list_tabs_cmd,
+            activate_tab_cmd,
+            edit_active_cmd,
+            open_path_cmd,
+            save_active_cmd,
+            save_active_as_cmd,
+            request_close_cmd,
+            confirm_close_cmd,
+            get_shell_state_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -9,25 +9,29 @@
   </head>
 
   <body>
-    <main class="container">
-      <h1>Nova</h1>
-      <p class="lede">
-        WUF-81 smoke: create Buffer → Accept hand-crafted Patch via IntentService IPC.
-      </p>
+    <div class="app">
+      <header class="toolbar">
+        <button type="button" id="new-tab">New</button>
+        <label class="path-field">
+          <span>Path</span>
+          <input id="path-input" type="text" placeholder="C:\notes\demo.txt" spellcheck="false" />
+        </label>
+        <button type="button" id="open-path">Open</button>
+        <button type="button" id="save">Save</button>
+        <button type="button" id="close-tab">Close</button>
+      </header>
 
-      <section class="panel">
-        <label for="buffer-text">Initial Buffer text</label>
-        <textarea id="buffer-text" rows="3">hello world</textarea>
-        <button type="button" id="create-buffer">Create Buffer</button>
-      </section>
+      <nav id="tab-bar" class="tab-bar" aria-label="Buffers"></nav>
 
-      <section class="panel">
-        <button type="button" id="accept-patch" disabled>
-          Accept Patch (world → nova)
-        </button>
-      </section>
+      <textarea
+        id="editor"
+        class="editor"
+        spellcheck="false"
+        placeholder="Untitled Buffer — start typing"
+        disabled
+      ></textarea>
 
-      <pre id="output" class="output" aria-live="polite"></pre>
-    </main>
+      <p id="status" class="status" aria-live="polite"></p>
+    </div>
   </body>
 </html>

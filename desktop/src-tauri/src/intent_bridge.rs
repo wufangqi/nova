@@ -157,6 +157,99 @@ pub fn accept(bridge: &SharedBridge, patches: Value) -> Result<Value, String> {
     unwrap_ipc(response)
 }
 
+pub fn evoke(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "evoke")
+}
+
+pub fn list_tabs(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "list_tabs")
+}
+
+pub fn activate_tab(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "activate_tab",
+        "params": { "id": id }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn edit_active(bridge: &SharedBridge, text: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "edit_active",
+        "params": { "text": text }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn open_path(bridge: &SharedBridge, path: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "open_path",
+        "params": { "path": path }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn save_active(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "save_active")
+}
+
+pub fn save_active_as(bridge: &SharedBridge, path: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "save_active_as",
+        "params": { "path": path }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn request_close(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "request_close",
+        "params": { "id": id }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn confirm_close(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "confirm_close",
+        "params": { "id": id }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn get_shell_state(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "get_shell_state")
+}
+
+fn call_empty(bridge: &SharedBridge, method: &str) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": method,
+        "params": {}
+    }))?;
+    unwrap_ipc(response)
+}
+
 fn unwrap_ipc(response: Value) -> Result<Value, String> {
     match response.get("ok").and_then(|v| v.as_bool()) {
         Some(true) => response

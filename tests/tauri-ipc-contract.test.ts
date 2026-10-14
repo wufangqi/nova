@@ -23,9 +23,9 @@ function aiPatch(
 }
 
 describe("IPC create_buffer", () => {
-  it("creates a Buffer snapshot via IntentService", () => {
+  it("creates a Buffer snapshot via IntentService", async () => {
     const host = new IntentIpcHost();
-    const res = host.handle({
+    const res = await host.handle({
       method: "create_buffer",
       params: { text: "hello" },
     });
@@ -38,16 +38,16 @@ describe("IPC create_buffer", () => {
 });
 
 describe("IPC accept hand-crafted Patch", () => {
-  it("Accepts through IntentService and returns updated Buffer text", () => {
+  it("Accepts through IntentService and returns updated Buffer text", async () => {
     const host = new IntentIpcHost();
-    const created = host.handle({
+    const created = await host.handle({
       method: "create_buffer",
       params: { text: "hello world" },
     });
     assert.equal(created.ok, true);
     if (!created.ok) return;
 
-    const accept = host.handle({
+    const accept = await host.handle({
       method: "accept",
       params: {
         patches: [
@@ -67,7 +67,7 @@ describe("IPC accept hand-crafted Patch", () => {
     if (!accept.ok) return;
     assert.equal(accept.result.accept.ok, true);
 
-    const got = host.handle({
+    const got = await host.handle({
       method: "get_buffer",
       params: { id: created.result.id },
     });
@@ -76,9 +76,9 @@ describe("IPC accept hand-crafted Patch", () => {
     assert.equal(got.result.text, "hello nova");
   });
 
-  it("does not open a write path outside IntentService.accept", () => {
+  it("does not open a write path outside IntentService.accept", async () => {
     const host = new IntentIpcHost();
-    const created = host.handle({
+    const created = await host.handle({
       method: "create_buffer",
       params: { text: "alpha beta" },
     });
@@ -88,7 +88,7 @@ describe("IPC accept hand-crafted Patch", () => {
     // Drift revision so relocate fails — same contract as IntentService.
     host.service.editBuffer(created.result.id, "ALPHA beta");
 
-    const accept = host.handle({
+    const accept = await host.handle({
       method: "accept",
       params: {
         patches: [
