@@ -27,3 +27,7 @@ npm run notepad            # manual: evoke → paste → save
 npm run demo:ten-second    # M2: hotkey → paste → Intent → preview → Accept
 npm run gates:windows      # cold start / hotkey / large-file floors (Windows gate target)
 ```
+
+## Next
+
+WUF-80 Tauri shell stage lives on `feature/wuf-80-tauri-shell`.
