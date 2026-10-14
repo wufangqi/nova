@@ -1,6 +1,6 @@
 # Nova desktop (Tauri)
 
-WUF-81/82 — Windows-first Tauri shell: IntentService IPC + EditorShell multi-Buffer UI.
+WUF-81/82/83 — Windows-first Tauri shell: IntentService IPC + EditorShell multi-Buffer UI + OS global hotkey.
 
 ## Prerequisites (Windows)
 
@@ -27,6 +27,7 @@ Editor smoke in the window:
 2. **New** → second tab; click tabs to switch
 3. Enter a Path → **Open** / **Save** (untitled uses save-as)
 4. **Close** on clean untitled → no prompt; dirty → confirm discard
+5. **Ctrl+Alt+N** (global) → app focuses, new untitled Buffer, prior tabs kept
 
 IPC host: Node process running `dist/ipc/cli-host.js` (or `src/ipc/cli-host.ts` via tsx in dev). Override with `NOVA_IPC_HOST`.
 
@@ -47,3 +48,6 @@ IPC host: Node process running `dist/ipc/cli-host.js` (or `src/ipc/cli-host.ts` 
 | `request_close_cmd`     | `request_close`     | `EditorShell.requestClose`      |
 | `confirm_close_cmd`     | `confirm_close`     | `EditorShell.confirmClose`      |
 | `get_shell_state_cmd`   | `get_shell_state`   | active Buffer + tabs            |
+| `get_global_hotkey_cmd` | —                   | returns `Ctrl+Alt+N`            |
+
+OS hotkey: Tauri `tauri-plugin-global-shortcut` registers `Ctrl+Alt+N` at setup; on press it focuses the main window, runs `evoke`, and emits `hotkey-evoke` for the UI.

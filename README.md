@@ -9,6 +9,7 @@ Lightweight AI notepad core (internal).
 - **WUF-72** — `FindBar` PCRE find / replace-over-Scope → Accept
 - **WUF-79** — ten-second Demo (`runTenSecondDemo`) + Windows floors (`runWindowsGates`)
 - **WUF-81** — Tauri desktop IPC facade (`IntentIpcHost` / `desktop/`) thin-wrapping IntentService
+- **WUF-83** — OS global hotkey (`Ctrl+Alt+N`) → evoke untitled Buffer (tabs kept)
 
 ## Offline editor ≠ offline AI (ADR-0003)
 

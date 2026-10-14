@@ -1,7 +1,7 @@
 [package]
 name = "desktop"
 version = "0.1.0"
-description = "Nova Tauri desktop shell (WUF-81/82) — IntentService + EditorShell IPC"
+description = "Nova Tauri desktop shell (WUF-81/82/83) — IntentService + EditorShell + global hotkey"
 authors = ["nova"]
 edition = "2021"
 
@@ -31,3 +31,6 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-global-shortcut = "2.4.1"
