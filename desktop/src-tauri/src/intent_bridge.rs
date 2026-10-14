@@ -239,6 +239,62 @@ pub fn get_shell_state(bridge: &SharedBridge) -> Result<Value, String> {
     call_empty(bridge, "get_shell_state")
 }
 
+pub fn preview_intent(
+    bridge: &SharedBridge,
+    utterance: String,
+    selection: Option<Value>,
+    visible_window: Option<Value>,
+) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let mut params = json!({ "utterance": utterance });
+    if let Some(sel) = selection {
+        params["selection"] = sel;
+    }
+    if let Some(win) = visible_window {
+        params["visibleWindow"] = win;
+    }
+    let response = guard.call(json!({
+        "method": "preview_intent",
+        "params": params
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn reject_preview(bridge: &SharedBridge, preview_id: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "reject_preview",
+        "params": { "previewId": preview_id }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn undo(bridge: &SharedBridge, undo_group_id: String) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "undo",
+        "params": { "undoGroupId": undo_group_id }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn set_cloud_enabled(bridge: &SharedBridge, enabled: bool) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "set_cloud_enabled",
+        "params": { "enabled": enabled }
+    }))?;
+    unwrap_ipc(response)
+}
+
 fn call_empty(bridge: &SharedBridge, method: &str) -> Result<Value, String> {
     let mut guard = bridge
         .lock()

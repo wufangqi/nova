@@ -7,7 +7,9 @@ import readline from "node:readline";
 import { IntentIpcHost } from "./host.js";
 import type { IpcRequest } from "./protocol.js";
 
-const host = new IntentIpcHost();
+const host = new IntentIpcHost({
+  cloudEnabled: process.env.NOVA_CLOUD_ENABLED === "1",
+});
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
 let queue: Promise<void> = Promise.resolve();

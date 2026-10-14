@@ -17,7 +17,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto auto;
   min-height: 100vh;
 }
 
@@ -102,6 +102,79 @@ button.tab.active {
 .editor:disabled {
   background: #f3f1ec;
   color: #777;
+}
+
+.intent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.75rem;
+  background: #e6e2d9;
+  border-top: 1px solid #bdb7aa;
+}
+
+.intent-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.intent-field {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  font-weight: 600;
+}
+
+.intent-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+}
+
+.cloud-toggle {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.92rem;
+  color: #3d3d3d;
+  cursor: pointer;
+  user-select: none;
+}
+
+.intent-meta {
+  font-size: 0.9rem;
+  color: #3d3d3d;
+}
+
+.outbound-banner {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #8a4b2a;
+  border-radius: 3px;
+  background: #f3e0d4;
+  color: #5a2d14;
+  font-weight: 650;
+  white-space: pre-wrap;
+}
+
+.patch-diff {
+  margin: 0;
+  max-height: 10rem;
+  overflow: auto;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #1e1e1e;
+  color: #d6d6d6;
+  font: 13px/1.4 "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+  white-space: pre-wrap;
 }
 
 .status {

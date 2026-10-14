@@ -1,7 +1,8 @@
 /**
  * WUF-83 contract: OS global hotkey port → new untitled Buffer, keep tabs.
  * Seam: global-hotkey port (accelerator + onGlobalHotkeyPressed → EditorShell).
- * Tauri registers the same accelerator; this suite locks the domain side.
+ * Tauri registers the same accelerator on Windows; OS registration / smoke is
+ * recorded in IMPLEMENTATION.md — this suite locks the domain + IPC side only.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -13,22 +14,22 @@ import {
 } from "../src/global-hotkey.js";
 import { IntentIpcHost } from "../src/ipc/host.js";
 
-describe("global hotkey accelerator", () => {
-  it("exports a Windows-registerable Ctrl+Alt accelerator", () => {
+describe("global hotkey port constants", () => {
+  it("exports the accelerator and desktop event name the shell mirrors", () => {
     assert.equal(GLOBAL_HOTKEY_ACCELERATOR, "Ctrl+Alt+N");
-    assert.match(GLOBAL_HOTKEY_ACCELERATOR, /^Ctrl\+Alt\+[A-Z]$/);
-  });
-
-  it("names the desktop event the shell UI listens for", () => {
     assert.equal(HOTKEY_EVOKE_EVENT, "hotkey-evoke");
   });
 });
 
 describe("global hotkey evoke port", () => {
-  it("creates a new untitled Buffer, focuses it, and keeps prior tabs", () => {
+  it("creates a new untitled Buffer, focuses it, and keeps prior dirty tabs", () => {
     const shell = new EditorShell();
     const prior = shell.evokeNewUntitled();
     shell.editActive("keep me");
+
+    const priorTab = shell.listTabs().find((t) => t.bufferId === prior.id);
+    assert.ok(priorTab);
+    assert.equal(priorTab.dirty, true);
 
     const created = onGlobalHotkeyPressed(shell);
 
@@ -37,6 +38,10 @@ describe("global hotkey evoke port", () => {
     assert.equal(shell.activeBufferId, created.id);
     assert.equal(shell.listTabs().length, 2);
     assert.ok(shell.listTabs().some((t) => t.bufferId === prior.id));
+    assert.equal(
+      shell.listTabs().find((t) => t.bufferId === prior.id)!.dirty,
+      true,
+    );
 
     shell.activateTab(prior.id);
     assert.equal(shell.getActiveBuffer().text, "keep me");
@@ -64,6 +69,12 @@ describe("IPC evoke path used by the hotkey port", () => {
       second.result.tabs.find((t) => t.active)!.bufferId,
     );
     assert.notEqual(second.result.buffer.id, first.result.buffer.id);
+
+    const priorTab = second.result.tabs.find(
+      (t) => t.bufferId === first.result.buffer.id,
+    );
+    assert.ok(priorTab);
+    assert.equal(priorTab.dirty, true);
 
     const switchBack = await host.handle({
       method: "activate_tab",
