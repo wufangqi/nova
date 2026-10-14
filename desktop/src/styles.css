@@ -177,6 +177,63 @@ button.tab.active {
   white-space: pre-wrap;
 }
 
+.suggestions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.suggestions-bar .suggestion-chip {
+  background: #f7f5f0;
+  color: #1c1c1c;
+  border-color: #8a7f6a;
+  font-weight: 550;
+}
+
+.explanation-panel {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #f7f5f0;
+}
+
+.explanation-summary {
+  margin: 0 0 0.4rem;
+  font-weight: 650;
+}
+
+.explanation-anchors {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.explanation-anchors button {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  color: #1c1c1c;
+  border-color: #bdb7aa;
+  font-weight: 500;
+}
+
+.explanation-anchors button.invalid {
+  border-color: #8a4b2a;
+  color: #5a2d14;
+  background: #f3e0d4;
+}
+
+.explanation-anchors .anchor-note {
+  display: block;
+  font-size: 0.88rem;
+  color: #555;
+  font-weight: 400;
+}
+
 .status {
   margin: 0;
   padding: 0.4rem 0.75rem;

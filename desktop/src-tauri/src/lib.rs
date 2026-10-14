@@ -2,8 +2,10 @@ mod intent_bridge;
 
 use intent_bridge::{
     accept, activate_tab, confirm_close, create_buffer, edit_active, evoke, get_buffer,
-    get_shell_state, list_tabs, open_path, preview_intent, reject_preview, request_close,
-    save_active, save_active_as, set_cloud_enabled, undo, IntentBridge, SharedBridge,
+    get_shell_state, get_suggestions_enabled, list_tabs, open_path, preview_intent,
+    reject_preview, request_close, resolve_explanation_anchor, save_active, save_active_as,
+    select_suggestion, set_cloud_enabled, set_suggestions_enabled, suggestions_for_paste, undo,
+    IntentBridge, SharedBridge,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -135,6 +137,46 @@ fn set_cloud_enabled_cmd(
     set_cloud_enabled(&bridge, enabled)
 }
 
+#[tauri::command]
+fn resolve_explanation_anchor_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    anchor: Value,
+) -> Result<Value, String> {
+    resolve_explanation_anchor(&bridge, anchor)
+}
+
+#[tauri::command]
+fn get_suggestions_enabled_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+) -> Result<Value, String> {
+    get_suggestions_enabled(&bridge)
+}
+
+#[tauri::command]
+fn set_suggestions_enabled_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    enabled: bool,
+) -> Result<Value, String> {
+    set_suggestions_enabled(&bridge, enabled)
+}
+
+#[tauri::command]
+fn suggestions_for_paste_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    clipboard_text: String,
+) -> Result<Value, String> {
+    suggestions_for_paste(&bridge, clipboard_text)
+}
+
+#[tauri::command]
+fn select_suggestion_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    suggestion: Value,
+    selection: Option<Value>,
+) -> Result<Value, String> {
+    select_suggestion(&bridge, suggestion, selection)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -163,7 +205,12 @@ pub fn run() {
             preview_intent_cmd,
             reject_preview_cmd,
             undo_cmd,
-            set_cloud_enabled_cmd
+            set_cloud_enabled_cmd,
+            resolve_explanation_anchor_cmd,
+            get_suggestions_enabled_cmd,
+            set_suggestions_enabled_cmd,
+            suggestions_for_paste_cmd,
+            select_suggestion_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

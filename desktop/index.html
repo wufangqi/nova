@@ -38,13 +38,20 @@
             <input
               id="intent-input"
               type="text"
-              placeholder="e.g. uppercase"
+              placeholder="e.g. uppercase / explain this"
               spellcheck="false"
             />
           </label>
           <label class="cloud-toggle" title="When on, preview surfaces Outbound">
             <input id="cloud-enabled" type="checkbox" />
             <span>Cloud path</span>
+          </label>
+          <label
+            class="cloud-toggle"
+            title="When on, paste may offer a few Suggestions (default off)"
+          >
+            <input id="suggestions-enabled" type="checkbox" />
+            <span>Suggestions</span>
           </label>
           <button type="button" id="intent-preview">Preview</button>
           <button type="button" id="intent-accept" disabled>Accept</button>
@@ -53,7 +60,22 @@
         </div>
         <div id="intent-meta" class="intent-meta" hidden></div>
         <div id="outbound-banner" class="outbound-banner" hidden role="status"></div>
+        <div
+          id="suggestions-bar"
+          class="suggestions-bar"
+          hidden
+          aria-label="Clipboard Suggestions"
+        ></div>
         <pre id="patch-diff" class="patch-diff" hidden aria-live="polite"></pre>
+        <div
+          id="explanation-panel"
+          class="explanation-panel"
+          hidden
+          aria-label="Explanation"
+        >
+          <p id="explanation-summary" class="explanation-summary"></p>
+          <ul id="explanation-anchors" class="explanation-anchors"></ul>
+        </div>
       </section>
 
       <p id="status" class="status" aria-live="polite"></p>

@@ -4,8 +4,10 @@
  */
 import type {
   AcceptResult,
+  AnchorResolveResult,
   BufferCreateOptions,
   BufferSnapshot,
+  ExplanationAnchor,
   Intent,
   Patch,
   PreviewId,
@@ -15,6 +17,7 @@ import type {
   VisibleWindow,
 } from "../types.js";
 import type { CloseResult, TabInfo } from "../editor-shell.js";
+import type { Suggestion } from "../suggestions.js";
 
 export type IpcMethod =
   | "create_buffer"
@@ -33,7 +36,12 @@ export type IpcMethod =
   | "preview_intent"
   | "reject_preview"
   | "undo"
-  | "set_cloud_enabled";
+  | "set_cloud_enabled"
+  | "resolve_explanation_anchor"
+  | "get_suggestions_enabled"
+  | "set_suggestions_enabled"
+  | "suggestions_for_paste"
+  | "select_suggestion";
 
 export type CreateBufferRequest = {
   method: "create_buffer";
@@ -126,6 +134,40 @@ export type SetCloudEnabledRequest = {
   params: { enabled: boolean };
 };
 
+export type ResolveExplanationAnchorRequest = {
+  method: "resolve_explanation_anchor";
+  params: {
+    anchor: ExplanationAnchor;
+    /** Defaults to the shell's active Buffer. */
+    bufferId?: string;
+  };
+};
+
+export type GetSuggestionsEnabledRequest = {
+  method: "get_suggestions_enabled";
+  params: Record<string, never> | {};
+};
+
+export type SetSuggestionsEnabledRequest = {
+  method: "set_suggestions_enabled";
+  params: { enabled: boolean };
+};
+
+export type SuggestionsForPasteRequest = {
+  method: "suggestions_for_paste";
+  params: { clipboardText: string };
+};
+
+export type SelectSuggestionRequest = {
+  method: "select_suggestion";
+  params: {
+    suggestion: Suggestion;
+    /** Defaults to the shell's active Buffer. */
+    bufferId?: string;
+    selection?: Selection;
+  };
+};
+
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
@@ -143,7 +185,12 @@ export type IpcRequest =
   | PreviewIntentRequest
   | RejectPreviewRequest
   | UndoRequest
-  | SetCloudEnabledRequest;
+  | SetCloudEnabledRequest
+  | ResolveExplanationAnchorRequest
+  | GetSuggestionsEnabledRequest
+  | SetSuggestionsEnabledRequest
+  | SuggestionsForPasteRequest
+  | SelectSuggestionRequest;
 
 export type IpcOk<T> = { ok: true; result: T };
 export type IpcErr = { ok: false; error: string };
@@ -194,4 +241,26 @@ export type UndoIpcResult = {
 
 export type SetCloudEnabledResult = {
   cloudEnabled: boolean;
+};
+
+export type ResolveExplanationAnchorResult = {
+  resolve: AnchorResolveResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type SuggestionsEnabledResult = {
+  enabled: boolean;
+};
+
+export type SuggestionsForPasteResult = {
+  suggestions: Suggestion[];
+};
+
+export type SelectSuggestionResult = {
+  preview: PreviewResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+  /** Utterance that entered Intent/preview (from the Suggestion). */
+  utterance: string;
 };

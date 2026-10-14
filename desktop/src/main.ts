@@ -57,6 +57,20 @@ type Outbound = {
   destination: "cloud";
 };
 
+type ExplanationAnchor = {
+  id: string;
+  start: number;
+  end: number;
+  note: string;
+  excerpt: string;
+  baseRevision: number;
+};
+
+type Explanation = {
+  summary: string;
+  anchors: ExplanationAnchor[];
+};
+
 type PreviewResult =
   | {
       kind: "patches";
@@ -68,7 +82,7 @@ type PreviewResult =
   | {
       kind: "explanation";
       previewId: string;
-      explanation: { summary: string };
+      explanation: Explanation;
       cost: Cost;
       outbound?: Outbound[];
     }
@@ -92,9 +106,36 @@ type PreviewIntentResult = {
   tabs: TabInfo[];
 };
 
+type SelectSuggestionResult = {
+  preview: PreviewResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+  utterance: string;
+};
+
 type AcceptIpcResult = {
   accept: { ok: true; undoGroupId: string } | { ok: false; reason: string };
   buffers: BufferSnapshot[];
+};
+
+type Suggestion = {
+  id: string;
+  label: string;
+  utterance: string;
+};
+
+type AnchorResolveResult =
+  | { ok: true; status: "valid"; start: number; end: number }
+  | {
+      ok: false;
+      status: "invalid";
+      reason: "reloc_failed" | "stale" | "unknown";
+    };
+
+type ResolveExplanationAnchorResult = {
+  resolve: AnchorResolveResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
 };
 
 let applyingRemote = false;
@@ -102,7 +143,6 @@ let activeId: string | null = null;
 let pendingPreviewId: string | null = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
-
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing #${id}`);
@@ -125,6 +165,19 @@ function setIntentActions(opts: {
   );
 }
 
+function clearExplanationPanel() {
+  const panel = el<HTMLElement>("explanation-panel");
+  panel.hidden = true;
+  el<HTMLElement>("explanation-summary").textContent = "";
+  el<HTMLElement>("explanation-anchors").replaceChildren();
+}
+
+function clearSuggestionsBar() {
+  const bar = el<HTMLElement>("suggestions-bar");
+  bar.hidden = true;
+  bar.replaceChildren();
+}
+
 function clearPreviewPanel() {
   pendingPreviewId = null;
   pendingPatches = null;
@@ -134,6 +187,7 @@ function clearPreviewPanel() {
   el<HTMLElement>("outbound-banner").textContent = "";
   el<HTMLElement>("patch-diff").hidden = true;
   el<HTMLElement>("patch-diff").textContent = "";
+  clearExplanationPanel();
   setIntentActions({ accept: false, reject: false });
 }
 
@@ -177,10 +231,22 @@ function editorSelection():
   return undefined;
 }
 
+function jumpEditorTo(start: number, end: number) {
+  const editor = el<HTMLTextAreaElement>("editor");
+  editor.focus();
+  editor.setSelectionRange(start, end);
+  // Approximate scroll so the jumped span is visible.
+  const before = editor.value.slice(0, start);
+  const line = before.split("\n").length;
+  const lineHeight = editor.scrollHeight / Math.max(editor.value.split("\n").length, 1);
+  editor.scrollTop = Math.max(0, (line - 3) * lineHeight);
+}
+
 async function evoke() {
   const result = await invoke<ShellBufferResult>("evoke_cmd");
   applyState(result.buffer, result.tabs);
   clearPreviewPanel();
+  clearSuggestionsBar();
   setStatus(`New untitled Buffer (${result.buffer.id.slice(0, 8)}…)`);
   el<HTMLTextAreaElement>("editor").focus();
 }
@@ -190,6 +256,7 @@ async function activateTab(id: string) {
   const result = await invoke<ShellBufferResult>("activate_tab_cmd", { id });
   applyState(result.buffer, result.tabs);
   clearPreviewPanel();
+  clearSuggestionsBar();
   setStatus(`Switched to ${result.tabs.find((t) => t.active)?.title ?? id}`);
 }
 
@@ -210,6 +277,7 @@ async function openPath() {
     const result = await invoke<ShellBufferResult>("open_path_cmd", { path });
     applyState(result.buffer, result.tabs);
     clearPreviewPanel();
+    clearSuggestionsBar();
     setStatus(`Opened ${path}`);
   } catch (err) {
     setStatus(String(err));
@@ -270,12 +338,14 @@ async function closeActive() {
       const state = await invoke<ShellStateResult>("get_shell_state_cmd");
       applyState(state.buffer, confirmed.tabs);
       clearPreviewPanel();
+      clearSuggestionsBar();
       setStatus("Closed after confirm");
       return;
     }
     const state = await invoke<ShellStateResult>("get_shell_state_cmd");
     applyState(state.buffer, result.tabs);
     clearPreviewPanel();
+    clearSuggestionsBar();
     setStatus(result.close.asked ? "Closed" : "Closed (clean, no prompt)");
   } catch (err) {
     setStatus(String(err));
@@ -301,6 +371,104 @@ function showCostAndOutbound(preview: Exclude<PreviewResult, { kind: "error" }>)
   }
 }
 
+function renderExplanation(explanation: Explanation) {
+  const panel = el<HTMLElement>("explanation-panel");
+  panel.hidden = false;
+  el<HTMLElement>("explanation-summary").textContent = explanation.summary;
+
+  const list = el<HTMLElement>("explanation-anchors");
+  list.replaceChildren();
+  for (const anchor of explanation.anchors) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.anchorId = anchor.id;
+    const label = document.createElement("span");
+    label.textContent = anchor.excerpt.slice(0, 80) + (anchor.excerpt.length > 80 ? "…" : "");
+    const note = document.createElement("span");
+    note.className = "anchor-note";
+    note.textContent = anchor.note;
+    btn.append(label, note);
+    btn.addEventListener("click", () => {
+      void jumpToAnchor(anchor);
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+async function jumpToAnchor(anchor: ExplanationAnchor) {
+  try {
+    const result = await invoke<ResolveExplanationAnchorResult>(
+      "resolve_explanation_anchor_cmd",
+      { anchor },
+    );
+    applyState(result.buffer, result.tabs);
+
+    const list = el<HTMLElement>("explanation-anchors");
+    for (const btn of list.querySelectorAll("button")) {
+      btn.classList.toggle(
+        "invalid",
+        (btn as HTMLButtonElement).dataset.anchorId === anchor.id &&
+          !result.resolve.ok,
+      );
+    }
+
+    if (result.resolve.ok) {
+      jumpEditorTo(result.resolve.start, result.resolve.end);
+      setStatus(
+        `Jumped to anchor (${result.resolve.start}–${result.resolve.end}) — Buffer unchanged`,
+      );
+      return;
+    }
+    setStatus(
+      `Anchor invalid (${result.resolve.reason}) — no jump; Buffer unchanged`,
+    );
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+function applyPreviewResult(
+  preview: PreviewResult,
+  buffer: BufferSnapshot,
+  tabs: TabInfo[],
+  scopeHint: string,
+) {
+  clearPreviewPanel();
+  applyState(buffer, tabs);
+
+  if (preview.kind === "error") {
+    setStatus(`${preview.reason}: ${preview.guidance}`);
+    return;
+  }
+
+  showCostAndOutbound(preview);
+  pendingPreviewId = preview.previewId;
+
+  const diffEl = el<HTMLElement>("patch-diff");
+  if (preview.kind === "patches") {
+    pendingPatches = preview.patches;
+    diffEl.hidden = false;
+    diffEl.textContent = formatPatchDiff(buffer.text, preview.patches);
+    setIntentActions({ accept: true, reject: true });
+    setStatus(`Preview ready (${scopeHint}) — Accept or Reject`);
+    return;
+  }
+
+  if (preview.kind === "explanation") {
+    renderExplanation(preview.explanation);
+    setIntentActions({ accept: false, reject: true });
+    setStatus("Explanation preview (read-only — click anchor to jump; Reject to dismiss)");
+    return;
+  }
+
+  diffEl.hidden = false;
+  diffEl.textContent = `RegexDraft: /${preview.draft.pattern}/`;
+  setIntentActions({ accept: false, reject: true });
+  setStatus("RegexDraft preview (fills FindBar later — Reject to dismiss)");
+}
+
 async function runPreview() {
   if (!activeId) {
     setStatus("No active Buffer for Intent");
@@ -319,45 +487,12 @@ async function runPreview() {
       selection: selection ?? null,
       visibleWindow: null,
     });
-
-    clearPreviewPanel();
-    applyState(result.buffer, result.tabs);
-
-    if (result.preview.kind === "error") {
-      setStatus(`${result.preview.reason}: ${result.preview.guidance}`);
-      return;
-    }
-
-    showCostAndOutbound(result.preview);
-    pendingPreviewId = result.preview.previewId;
-
-    const diffEl = el<HTMLElement>("patch-diff");
-    if (result.preview.kind === "patches") {
-      pendingPatches = result.preview.patches;
-      diffEl.hidden = false;
-      diffEl.textContent = formatPatchDiff(
-        result.buffer.text,
-        result.preview.patches,
-      );
-      setIntentActions({ accept: true, reject: true });
-      setStatus(
-        `Preview ready (${result.intent.scopeLabel}) — Accept or Reject`,
-      );
-      return;
-    }
-
-    if (result.preview.kind === "explanation") {
-      diffEl.hidden = false;
-      diffEl.textContent = result.preview.explanation.summary;
-      setIntentActions({ accept: false, reject: true });
-      setStatus("Explanation preview (read-only — Reject to dismiss)");
-      return;
-    }
-
-    diffEl.hidden = false;
-    diffEl.textContent = `RegexDraft: /${result.preview.draft.pattern}/`;
-    setIntentActions({ accept: false, reject: true });
-    setStatus("RegexDraft preview (fills FindBar later — Reject to dismiss)");
+    applyPreviewResult(
+      result.preview,
+      result.buffer,
+      result.tabs,
+      result.intent.scopeLabel,
+    );
   } catch (err) {
     setStatus(String(err));
   }
@@ -433,6 +568,105 @@ async function onCloudToggle() {
   }
 }
 
+async function onSuggestionsToggle() {
+  const enabled = el<HTMLInputElement>("suggestions-enabled").checked;
+  try {
+    const result = await invoke<{ enabled: boolean }>(
+      "set_suggestions_enabled_cmd",
+      { enabled },
+    );
+    if (!result.enabled) {
+      clearSuggestionsBar();
+    }
+    setStatus(
+      result.enabled
+        ? "Suggestions on — paste may offer a few next steps"
+        : "Suggestions off (global)",
+    );
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+function renderSuggestions(items: Suggestion[]) {
+  const bar = el<HTMLElement>("suggestions-bar");
+  bar.replaceChildren();
+  if (items.length === 0) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  const label = document.createElement("span");
+  label.textContent = "Suggestions:";
+  bar.appendChild(label);
+  for (const item of items) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "suggestion-chip";
+    btn.textContent = item.label;
+    btn.title = item.utterance;
+    btn.addEventListener("click", () => {
+      void selectSuggestion(item);
+    });
+    bar.appendChild(btn);
+  }
+}
+
+async function onEditorPaste(ev: ClipboardEvent) {
+  if (!el<HTMLInputElement>("suggestions-enabled").checked) {
+    clearSuggestionsBar();
+    return;
+  }
+  const clipboardText = ev.clipboardData?.getData("text") ?? "";
+  if (!clipboardText.trim()) {
+    clearSuggestionsBar();
+    return;
+  }
+  try {
+    const result = await invoke<{ suggestions: Suggestion[] }>(
+      "suggestions_for_paste_cmd",
+      { clipboardText },
+    );
+    renderSuggestions(result.suggestions);
+    if (result.suggestions.length > 0) {
+      setStatus(
+        `${result.suggestions.length} Suggestion(s) — select one to enter Intent preview (does not write Buffer)`,
+      );
+    }
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function selectSuggestion(suggestion: Suggestion) {
+  if (!activeId) {
+    setStatus("No active Buffer for Suggestion");
+    return;
+  }
+  try {
+    const selection = editorSelection();
+    const result = await invoke<SelectSuggestionResult>("select_suggestion_cmd", {
+      suggestion,
+      selection: selection ?? null,
+    });
+    el<HTMLInputElement>("intent-input").value = result.utterance;
+    clearSuggestionsBar();
+    applyPreviewResult(
+      result.preview,
+      result.buffer,
+      result.tabs,
+      "Suggestion",
+    );
+    if (result.preview.kind !== "error") {
+      setStatus(
+        `Suggestion → Intent preview (${result.utterance}) — Buffer not written`,
+      );
+    }
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   el<HTMLButtonElement>("new-tab").addEventListener("click", () => {
     void evoke().catch((err) => setStatus(String(err)));
@@ -448,6 +682,9 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   el<HTMLTextAreaElement>("editor").addEventListener("input", () => {
     void onEdit().catch((err) => setStatus(String(err)));
+  });
+  el<HTMLTextAreaElement>("editor").addEventListener("paste", (ev) => {
+    void onEditorPaste(ev);
   });
 
   el<HTMLButtonElement>("intent-preview").addEventListener("click", () => {
@@ -465,6 +702,9 @@ window.addEventListener("DOMContentLoaded", () => {
   el<HTMLInputElement>("cloud-enabled").addEventListener("change", () => {
     void onCloudToggle();
   });
+  el<HTMLInputElement>("suggestions-enabled").addEventListener("change", () => {
+    void onSuggestionsToggle();
+  });
   el<HTMLInputElement>("intent-input").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
@@ -472,5 +712,15 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  void evoke().catch((err) => setStatus(String(err)));
+  void (async () => {
+    try {
+      const state = await invoke<{ enabled: boolean }>(
+        "get_suggestions_enabled_cmd",
+      );
+      el<HTMLInputElement>("suggestions-enabled").checked = state.enabled;
+    } catch {
+      el<HTMLInputElement>("suggestions-enabled").checked = false;
+    }
+    await evoke();
+  })().catch((err) => setStatus(String(err)));
 });

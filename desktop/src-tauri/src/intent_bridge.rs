@@ -295,6 +295,68 @@ pub fn set_cloud_enabled(bridge: &SharedBridge, enabled: bool) -> Result<Value, 
     unwrap_ipc(response)
 }
 
+pub fn resolve_explanation_anchor(
+    bridge: &SharedBridge,
+    anchor: Value,
+) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "resolve_explanation_anchor",
+        "params": { "anchor": anchor }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn get_suggestions_enabled(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "get_suggestions_enabled")
+}
+
+pub fn set_suggestions_enabled(bridge: &SharedBridge, enabled: bool) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "set_suggestions_enabled",
+        "params": { "enabled": enabled }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn suggestions_for_paste(
+    bridge: &SharedBridge,
+    clipboard_text: String,
+) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "suggestions_for_paste",
+        "params": { "clipboardText": clipboard_text }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn select_suggestion(
+    bridge: &SharedBridge,
+    suggestion: Value,
+    selection: Option<Value>,
+) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let mut params = json!({ "suggestion": suggestion });
+    if let Some(sel) = selection {
+        params["selection"] = sel;
+    }
+    let response = guard.call(json!({
+        "method": "select_suggestion",
+        "params": params
+    }))?;
+    unwrap_ipc(response)
+}
+
 fn call_empty(bridge: &SharedBridge, method: &str) -> Result<Value, String> {
     let mut guard = bridge
         .lock()

@@ -1,9 +1,11 @@
 /**
  * IntentIpcHost — deep IntentService + EditorShell behind a small IPC interface.
  * All Accept writes go through IntentService.accept only.
+ * WUF-86: Explanation anchor resolve + ClipboardSuggestions (default off).
  */
 import { EditorShell } from "../editor-shell.js";
 import { IntentService } from "../intent-service.js";
+import { ClipboardSuggestions } from "../suggestions.js";
 import type { IntentServiceOptions } from "../types.js";
 import type {
   AcceptIpcResult,
@@ -17,6 +19,7 @@ import type {
   GetBufferRequest,
   GetBufferResult,
   GetShellStateRequest,
+  GetSuggestionsEnabledRequest,
   IpcRequest,
   IpcResponse,
   ListTabsRequest,
@@ -26,14 +29,22 @@ import type {
   RejectPreviewRequest,
   RejectPreviewResult,
   RequestCloseRequest,
+  ResolveExplanationAnchorRequest,
+  ResolveExplanationAnchorResult,
   SaveActiveAsRequest,
   SaveActiveRequest,
+  SelectSuggestionRequest,
+  SelectSuggestionResult,
   SetCloudEnabledRequest,
   SetCloudEnabledResult,
+  SetSuggestionsEnabledRequest,
   ShellBufferResult,
   ShellCloseResult,
   ShellStateResult,
   ShellTabsResult,
+  SuggestionsEnabledResult,
+  SuggestionsForPasteRequest,
+  SuggestionsForPasteResult,
   UndoIpcResult,
   UndoRequest,
 } from "./protocol.js";
@@ -41,10 +52,12 @@ import type {
 export class IntentIpcHost {
   readonly service: IntentService;
   readonly shell: EditorShell;
+  readonly suggestions: ClipboardSuggestions;
 
   constructor(options: IntentServiceOptions = {}) {
     this.service = new IntentService(options);
     this.shell = new EditorShell(this.service);
+    this.suggestions = new ClipboardSuggestions(this.service);
   }
 
   handle(request: CreateBufferRequest): Promise<IpcResponse<CreateBufferResult>>;
@@ -64,6 +77,21 @@ export class IntentIpcHost {
   handle(request: RejectPreviewRequest): Promise<IpcResponse<RejectPreviewResult>>;
   handle(request: UndoRequest): Promise<IpcResponse<UndoIpcResult>>;
   handle(request: SetCloudEnabledRequest): Promise<IpcResponse<SetCloudEnabledResult>>;
+  handle(
+    request: ResolveExplanationAnchorRequest,
+  ): Promise<IpcResponse<ResolveExplanationAnchorResult>>;
+  handle(
+    request: GetSuggestionsEnabledRequest,
+  ): Promise<IpcResponse<SuggestionsEnabledResult>>;
+  handle(
+    request: SetSuggestionsEnabledRequest,
+  ): Promise<IpcResponse<SuggestionsEnabledResult>>;
+  handle(
+    request: SuggestionsForPasteRequest,
+  ): Promise<IpcResponse<SuggestionsForPasteResult>>;
+  handle(
+    request: SelectSuggestionRequest,
+  ): Promise<IpcResponse<SelectSuggestionResult>>;
   handle(request: IpcRequest): Promise<IpcResponse<unknown>>;
   async handle(request: IpcRequest): Promise<IpcResponse<unknown>> {
     try {
@@ -207,6 +235,77 @@ export class IntentIpcHost {
             result: {
               cloudEnabled: this.service.getCloudEnabled(),
             } satisfies SetCloudEnabledResult,
+          };
+        }
+        case "resolve_explanation_anchor": {
+          const bufferId =
+            request.params.bufferId ?? this.shell.activeBufferId;
+          if (!bufferId) {
+            return {
+              ok: false,
+              error: "no active Buffer for Explanation anchor resolve",
+            };
+          }
+          const resolve = this.service.resolveExplanationAnchor(
+            bufferId,
+            request.params.anchor,
+          );
+          return {
+            ok: true,
+            result: {
+              resolve,
+              buffer: this.service.getBuffer(bufferId),
+              tabs: this.shell.listTabs(),
+            } satisfies ResolveExplanationAnchorResult,
+          };
+        }
+        case "get_suggestions_enabled":
+          return {
+            ok: true,
+            result: {
+              enabled: this.suggestions.isEnabled(),
+            } satisfies SuggestionsEnabledResult,
+          };
+        case "set_suggestions_enabled": {
+          this.suggestions.setEnabled(request.params.enabled);
+          return {
+            ok: true,
+            result: {
+              enabled: this.suggestions.isEnabled(),
+            } satisfies SuggestionsEnabledResult,
+          };
+        }
+        case "suggestions_for_paste":
+          return {
+            ok: true,
+            result: {
+              suggestions: this.suggestions.suggestionsForPaste(
+                request.params.clipboardText,
+              ),
+            } satisfies SuggestionsForPasteResult,
+          };
+        case "select_suggestion": {
+          const bufferId =
+            request.params.bufferId ?? this.shell.activeBufferId;
+          if (!bufferId) {
+            return {
+              ok: false,
+              error: "no active Buffer for Suggestion select",
+            };
+          }
+          const preview = this.suggestions.select(
+            request.params.suggestion,
+            bufferId,
+            request.params.selection,
+          );
+          return {
+            ok: true,
+            result: {
+              preview,
+              buffer: this.service.getBuffer(bufferId),
+              tabs: this.shell.listTabs(),
+              utterance: request.params.suggestion.utterance,
+            } satisfies SelectSuggestionResult,
           };
         }
         default: {
