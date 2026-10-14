@@ -2,8 +2,8 @@ mod intent_bridge;
 
 use intent_bridge::{
     accept, activate_tab, confirm_close, create_buffer, edit_active, evoke, get_buffer,
-    get_shell_state, list_tabs, open_path, request_close, save_active, save_active_as,
-    IntentBridge, SharedBridge,
+    get_shell_state, list_tabs, open_path, preview_intent, reject_preview, request_close,
+    save_active, save_active_as, set_cloud_enabled, undo, IntentBridge, SharedBridge,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -101,6 +101,40 @@ fn get_shell_state_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, 
     get_shell_state(&bridge)
 }
 
+#[tauri::command]
+fn preview_intent_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    utterance: String,
+    selection: Option<Value>,
+    visible_window: Option<Value>,
+) -> Result<Value, String> {
+    preview_intent(&bridge, utterance, selection, visible_window)
+}
+
+#[tauri::command]
+fn reject_preview_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    preview_id: String,
+) -> Result<Value, String> {
+    reject_preview(&bridge, preview_id)
+}
+
+#[tauri::command]
+fn undo_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    undo_group_id: String,
+) -> Result<Value, String> {
+    undo(&bridge, undo_group_id)
+}
+
+#[tauri::command]
+fn set_cloud_enabled_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    enabled: bool,
+) -> Result<Value, String> {
+    set_cloud_enabled(&bridge, enabled)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -125,7 +159,11 @@ pub fn run() {
             save_active_as_cmd,
             request_close_cmd,
             confirm_close_cmd,
-            get_shell_state_cmd
+            get_shell_state_cmd,
+            preview_intent_cmd,
+            reject_preview_cmd,
+            undo_cmd,
+            set_cloud_enabled_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

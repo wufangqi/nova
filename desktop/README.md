@@ -1,6 +1,6 @@
 # Nova desktop (Tauri)
 
-WUF-81/82 — Windows-first Tauri shell: IntentService IPC + EditorShell multi-Buffer UI.
+WUF-81/82/84 — Windows-first Tauri shell: IntentService IPC + EditorShell multi-Buffer UI + Intent preview.
 
 ## Prerequisites (Windows)
 
@@ -27,23 +27,29 @@ Editor smoke in the window:
 2. **New** → second tab; click tabs to switch
 3. Enter a Path → **Open** / **Save** (untitled uses save-as)
 4. **Close** on clean untitled → no prompt; dirty → confirm discard
+5. Type Intent (e.g. `uppercase`) → **Preview** → see diff + Cost → **Accept** / **Reject**; **Undo** after Accept
+6. Toggle **Cloud path** → Preview shows Outbound banner
 
-IPC host: Node process running `dist/ipc/cli-host.js` (or `src/ipc/cli-host.ts` via tsx in dev). Override with `NOVA_IPC_HOST`.
+IPC host: Node process running `dist/ipc/cli-host.js` (or `src/ipc/cli-host.ts` via tsx in dev). Override with `NOVA_IPC_HOST`. Set `NOVA_CLOUD_ENABLED=1` to start with cloud Outbound on.
 
 ## Commands
 
-| Frontend `invoke`       | Host method         | Backend                         |
-| ----------------------- | ------------------- | ------------------------------- |
-| `create_buffer_cmd`     | `create_buffer`     | `IntentService.createBuffer`    |
-| `get_buffer_cmd`        | `get_buffer`        | `IntentService.getBuffer`       |
-| `accept_cmd`            | `accept`            | `IntentService.accept`          |
-| `evoke_cmd`             | `evoke`             | `EditorShell.evokeNewUntitled`  |
-| `list_tabs_cmd`         | `list_tabs`         | `EditorShell.listTabs`          |
-| `activate_tab_cmd`      | `activate_tab`      | `EditorShell.activateTab`       |
-| `edit_active_cmd`       | `edit_active`       | `EditorShell.editActive`        |
-| `open_path_cmd`         | `open_path`         | `EditorShell.openPath`          |
-| `save_active_cmd`       | `save_active`       | `EditorShell.saveActive`        |
-| `save_active_as_cmd`    | `save_active_as`    | `EditorShell.saveActiveAs`      |
-| `request_close_cmd`     | `request_close`     | `EditorShell.requestClose`      |
-| `confirm_close_cmd`     | `confirm_close`     | `EditorShell.confirmClose`      |
-| `get_shell_state_cmd`   | `get_shell_state`   | active Buffer + tabs            |
+| Frontend `invoke`         | Host method           | Backend                              |
+| ------------------------- | --------------------- | ------------------------------------ |
+| `create_buffer_cmd`       | `create_buffer`       | `IntentService.createBuffer`         |
+| `get_buffer_cmd`          | `get_buffer`          | `IntentService.getBuffer`            |
+| `accept_cmd`              | `accept`              | `IntentService.accept`               |
+| `evoke_cmd`               | `evoke`               | `EditorShell.evokeNewUntitled`       |
+| `list_tabs_cmd`           | `list_tabs`           | `EditorShell.listTabs`               |
+| `activate_tab_cmd`        | `activate_tab`        | `EditorShell.activateTab`            |
+| `edit_active_cmd`         | `edit_active`         | `EditorShell.editActive`             |
+| `open_path_cmd`           | `open_path`           | `EditorShell.openPath`               |
+| `save_active_cmd`         | `save_active`         | `EditorShell.saveActive`             |
+| `save_active_as_cmd`      | `save_active_as`      | `EditorShell.saveActiveAs`           |
+| `request_close_cmd`       | `request_close`       | `EditorShell.requestClose`           |
+| `confirm_close_cmd`       | `confirm_close`       | `EditorShell.confirmClose`           |
+| `get_shell_state_cmd`     | `get_shell_state`     | active Buffer + tabs                 |
+| `preview_intent_cmd`      | `preview_intent`      | `IntentService.parse` + `preview`    |
+| `reject_preview_cmd`      | `reject_preview`      | `IntentService.reject`               |
+| `undo_cmd`                | `undo`                | `IntentService.undo`                 |
+| `set_cloud_enabled_cmd`   | `set_cloud_enabled`   | `IntentService.setCloudEnabled`      |

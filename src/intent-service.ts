@@ -221,7 +221,7 @@ export class IntentService {
   private audit = new Map<BufferId, ProvenanceAuditEntry[]>();
   private outstandingPreviews = new Map<PreviewId, true>();
   private readonly modelAvailable: boolean;
-  private readonly cloudEnabled: boolean;
+  private cloudEnabled: boolean;
   private readonly visibleSampleChars: number;
   private readonly modelGateway: ModelGateway;
 
@@ -233,6 +233,15 @@ export class IntentService {
     this.modelGateway =
       (options.modelGateway as ModelGateway | undefined) ??
       new LocalModelGateway();
+  }
+
+  /** Session toggle: when true, previews surface Outbound (cloud path). */
+  setCloudEnabled(enabled: boolean): void {
+    this.cloudEnabled = enabled;
+  }
+
+  getCloudEnabled(): boolean {
+    return this.cloudEnabled;
   }
 
   createBuffer(text = "", options: BufferCreateOptions = {}): BufferSnapshot {

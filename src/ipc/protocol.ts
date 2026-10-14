@@ -1,12 +1,18 @@
 /**
- * WUF-81/82 — Tauri IPC request/response shapes.
+ * WUF-81/82/84 — Tauri IPC request/response shapes.
  * Thin facade over IntentService + EditorShell; no alternate Accept path.
  */
 import type {
   AcceptResult,
   BufferCreateOptions,
   BufferSnapshot,
+  Intent,
   Patch,
+  PreviewId,
+  PreviewResult,
+  Selection,
+  UndoGroupId,
+  VisibleWindow,
 } from "../types.js";
 import type { CloseResult, TabInfo } from "../editor-shell.js";
 
@@ -23,7 +29,11 @@ export type IpcMethod =
   | "save_active_as"
   | "request_close"
   | "confirm_close"
-  | "get_shell_state";
+  | "get_shell_state"
+  | "preview_intent"
+  | "reject_preview"
+  | "undo"
+  | "set_cloud_enabled";
 
 export type CreateBufferRequest = {
   method: "create_buffer";
@@ -90,6 +100,32 @@ export type GetShellStateRequest = {
   params: Record<string, never> | {};
 };
 
+export type PreviewIntentRequest = {
+  method: "preview_intent";
+  params: {
+    utterance: string;
+    /** Defaults to the shell's active Buffer. */
+    bufferId?: string;
+    selection?: Selection;
+    visibleWindow?: VisibleWindow;
+  };
+};
+
+export type RejectPreviewRequest = {
+  method: "reject_preview";
+  params: { previewId: PreviewId };
+};
+
+export type UndoRequest = {
+  method: "undo";
+  params: { undoGroupId: UndoGroupId };
+};
+
+export type SetCloudEnabledRequest = {
+  method: "set_cloud_enabled";
+  params: { enabled: boolean };
+};
+
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
@@ -103,7 +139,11 @@ export type IpcRequest =
   | SaveActiveAsRequest
   | RequestCloseRequest
   | ConfirmCloseRequest
-  | GetShellStateRequest;
+  | GetShellStateRequest
+  | PreviewIntentRequest
+  | RejectPreviewRequest
+  | UndoRequest
+  | SetCloudEnabledRequest;
 
 export type IpcOk<T> = { ok: true; result: T };
 export type IpcErr = { ok: false; error: string };
@@ -134,4 +174,24 @@ export type ShellTabsResult = {
 export type ShellCloseResult = {
   close: CloseResult;
   tabs: TabInfo[];
+};
+
+export type PreviewIntentResult = {
+  intent: Intent;
+  preview: PreviewResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type RejectPreviewResult = {
+  rejected: true;
+};
+
+export type UndoIpcResult = {
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type SetCloudEnabledResult = {
+  cloudEnabled: boolean;
 };

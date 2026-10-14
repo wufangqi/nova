@@ -21,13 +21,21 @@ import type {
   IpcResponse,
   ListTabsRequest,
   OpenPathRequest,
+  PreviewIntentRequest,
+  PreviewIntentResult,
+  RejectPreviewRequest,
+  RejectPreviewResult,
   RequestCloseRequest,
   SaveActiveAsRequest,
   SaveActiveRequest,
+  SetCloudEnabledRequest,
+  SetCloudEnabledResult,
   ShellBufferResult,
   ShellCloseResult,
   ShellStateResult,
   ShellTabsResult,
+  UndoIpcResult,
+  UndoRequest,
 } from "./protocol.js";
 
 export class IntentIpcHost {
@@ -52,6 +60,10 @@ export class IntentIpcHost {
   handle(request: RequestCloseRequest): Promise<IpcResponse<ShellCloseResult>>;
   handle(request: ConfirmCloseRequest): Promise<IpcResponse<ShellCloseResult>>;
   handle(request: GetShellStateRequest): Promise<IpcResponse<ShellStateResult>>;
+  handle(request: PreviewIntentRequest): Promise<IpcResponse<PreviewIntentResult>>;
+  handle(request: RejectPreviewRequest): Promise<IpcResponse<RejectPreviewResult>>;
+  handle(request: UndoRequest): Promise<IpcResponse<UndoIpcResult>>;
+  handle(request: SetCloudEnabledRequest): Promise<IpcResponse<SetCloudEnabledResult>>;
   handle(request: IpcRequest): Promise<IpcResponse<unknown>>;
   async handle(request: IpcRequest): Promise<IpcResponse<unknown>> {
     try {
@@ -145,6 +157,56 @@ export class IntentIpcHost {
               buffer: id ? this.service.getBuffer(id) : null,
               tabs: this.shell.listTabs(),
             } satisfies ShellStateResult,
+          };
+        }
+        case "preview_intent": {
+          const bufferId =
+            request.params.bufferId ?? this.shell.activeBufferId;
+          if (!bufferId) {
+            return { ok: false, error: "no active Buffer for Intent preview" };
+          }
+          const intent = this.service.parse({
+            bufferId,
+            utterance: request.params.utterance,
+            selection: request.params.selection,
+            visibleWindow: request.params.visibleWindow,
+          });
+          const preview = this.service.preview(intent);
+          return {
+            ok: true,
+            result: {
+              intent,
+              preview,
+              buffer: this.service.getBuffer(bufferId),
+              tabs: this.shell.listTabs(),
+            } satisfies PreviewIntentResult,
+          };
+        }
+        case "reject_preview": {
+          this.service.reject(request.params.previewId);
+          return {
+            ok: true,
+            result: { rejected: true } satisfies RejectPreviewResult,
+          };
+        }
+        case "undo": {
+          this.service.undo(request.params.undoGroupId);
+          const buffer = this.shell.getActiveBuffer();
+          return {
+            ok: true,
+            result: {
+              buffer,
+              tabs: this.shell.listTabs(),
+            } satisfies UndoIpcResult,
+          };
+        }
+        case "set_cloud_enabled": {
+          this.service.setCloudEnabled(request.params.enabled);
+          return {
+            ok: true,
+            result: {
+              cloudEnabled: this.service.getCloudEnabled(),
+            } satisfies SetCloudEnabledResult,
           };
         }
         default: {

@@ -31,6 +31,31 @@
         disabled
       ></textarea>
 
+      <section class="intent-panel" aria-label="Intent preview">
+        <div class="intent-bar">
+          <label class="intent-field">
+            <span>Intent</span>
+            <input
+              id="intent-input"
+              type="text"
+              placeholder="e.g. uppercase"
+              spellcheck="false"
+            />
+          </label>
+          <label class="cloud-toggle" title="When on, preview surfaces Outbound">
+            <input id="cloud-enabled" type="checkbox" />
+            <span>Cloud path</span>
+          </label>
+          <button type="button" id="intent-preview">Preview</button>
+          <button type="button" id="intent-accept" disabled>Accept</button>
+          <button type="button" id="intent-reject" disabled>Reject</button>
+          <button type="button" id="intent-undo" disabled>Undo</button>
+        </div>
+        <div id="intent-meta" class="intent-meta" hidden></div>
+        <div id="outbound-banner" class="outbound-banner" hidden role="status"></div>
+        <pre id="patch-diff" class="patch-diff" hidden aria-live="polite"></pre>
+      </section>
+
       <p id="status" class="status" aria-live="polite"></p>
     </div>
   </body>
