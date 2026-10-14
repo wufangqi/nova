@@ -5,7 +5,15 @@ export type Revision = number;
 export type UndoGroupId = string;
 export type IntentId = string;
 
-export type ProvenanceSource = "user" | "ai" | "action" | "plugin" | "findbar";
+export type Eol = "lf" | "crlf" | "cr";
+
+export type ProvenanceSource =
+  | "user"
+  | "ai"
+  | "action"
+  | "plugin"
+  | "findbar"
+  | "encoding";
 
 export interface Provenance {
   source: ProvenanceSource;
@@ -18,7 +26,16 @@ export interface BufferSnapshot {
   text: string;
   revision: Revision;
   encoding: string;
-  eol: "lf" | "crlf" | "cr";
+  eol: Eol;
+  /** Whether Path IO should write a BOM for this Encoding. */
+  bom: boolean;
+}
+
+/** Optional Buffer metadata applied only when Accept is explicit about it. */
+export interface PatchMetadata {
+  encoding?: string;
+  eol?: Eol;
+  bom?: boolean;
 }
 
 /**
@@ -39,6 +56,8 @@ export interface Patch {
   edits: TextEdit[];
   provenance: Provenance;
   intentId?: IntentId;
+  /** Explicit Encoding/EOL/BOM change; omitted ⇒ Accept leaves metadata alone. */
+  metadata?: PatchMetadata;
 }
 
 export type AcceptOk = { ok: true; undoGroupId: UndoGroupId };
@@ -65,4 +84,10 @@ export interface ProvenanceAuditEntry {
   bufferId: BufferId;
   textBefore: string;
   textAfter: string;
+}
+
+export interface BufferCreateOptions {
+  encoding?: string;
+  eol?: Eol;
+  bom?: boolean;
 }

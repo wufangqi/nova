@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type {
   AcceptResult,
+  BufferCreateOptions,
   BufferId,
   BufferSnapshot,
+  Eol,
   MainHistoryEntry,
   Patch,
   ProvenanceAuditEntry,
@@ -15,7 +17,8 @@ interface BufferState {
   text: string;
   revision: number;
   encoding: string;
-  eol: "lf" | "crlf" | "cr";
+  eol: Eol;
+  bom: boolean;
 }
 
 interface UndoGroupRecord {
@@ -25,6 +28,12 @@ interface UndoGroupRecord {
   revisionBefore: number;
   textAfter: string;
   revisionAfter: number;
+  encodingBefore: string;
+  eolBefore: Eol;
+  bomBefore: boolean;
+  encodingAfter: string;
+  eolAfter: Eol;
+  bomAfter: boolean;
 }
 
 interface RelocatedEdit {
@@ -40,6 +49,7 @@ function snapshot(b: BufferState): BufferSnapshot {
     revision: b.revision,
     encoding: b.encoding,
     eol: b.eol,
+    bom: b.bom,
   };
 }
 
@@ -65,17 +75,12 @@ function relocateEdit(
   const after = edit.after ?? "";
   const expectedLen = edit.end - edit.start;
 
-  // Search for before + oldSpan + after. Without the original span content we
-  // only know its length — require unique before/after framing to be safe.
-  // Prefer: find `before` then verify `after` at before.length + expectedLen.
   if (before.length === 0 && after.length === 0) {
-    // No anchors → cannot safely relocate across revisions.
     return null;
   }
 
   const candidates: number[] = [];
   if (before.length === 0) {
-    // Match by trailing `after` only: end of span sits just before `after`.
     let from = 0;
     while (from <= text.length) {
       const idx = text.indexOf(after, from);
@@ -121,8 +126,8 @@ function applyEdits(text: string, edits: RelocatedEdit[]): string {
 
 /**
  * IntentService — single Accept write seam for proposal Patches.
- * WUF-70 covers Buffer + accept / undo / dual-track Provenance.
- * parse / preview arrive in later Work tickets.
+ * WUF-70: Buffer + accept / undo / dual-track Provenance.
+ * WUF-73: Encoding/EOL/BOM metadata; Accept mutates them only when Patch.metadata is set.
  */
 export class IntentService {
   private buffers = new Map<BufferId, BufferState>();
@@ -130,14 +135,15 @@ export class IntentService {
   private mainHistory = new Map<BufferId, MainHistoryEntry[]>();
   private audit = new Map<BufferId, ProvenanceAuditEntry[]>();
 
-  createBuffer(text = ""): BufferSnapshot {
+  createBuffer(text = "", options: BufferCreateOptions = {}): BufferSnapshot {
     const id = randomUUID();
     const state: BufferState = {
       id,
       text,
       revision: 0,
-      encoding: "utf-8",
-      eol: "lf",
+      encoding: options.encoding ?? "utf-8",
+      eol: options.eol ?? "lf",
+      bom: options.bom ?? false,
     };
     this.buffers.set(id, state);
     this.mainHistory.set(id, []);
@@ -156,6 +162,23 @@ export class IntentService {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
     b.text = text;
+    b.revision += 1;
+    return snapshot(b);
+  }
+
+  /**
+   * Explicit user control of Encoding/EOL/BOM (not a silent model side-effect).
+   * Bumps revision so outstanding Patches relocate or void.
+   */
+  setBufferMeta(
+    id: BufferId,
+    meta: { encoding?: string; eol?: Eol; bom?: boolean },
+  ): BufferSnapshot {
+    const b = this.buffers.get(id);
+    if (!b) throw new Error(`unknown Buffer: ${id}`);
+    if (meta.encoding !== undefined) b.encoding = meta.encoding;
+    if (meta.eol !== undefined) b.eol = meta.eol;
+    if (meta.bom !== undefined) b.bom = meta.bom;
     b.revision += 1;
     return snapshot(b);
   }
@@ -186,7 +209,6 @@ export class IntentService {
       }
     }
 
-    // Overlap check on relocated spans (whole batch or nothing).
     const sorted = [...relocated].sort((a, b) => a.start - b.start);
     for (let i = 1; i < sorted.length; i++) {
       if (sorted[i]!.start < sorted[i - 1]!.end) {
@@ -194,11 +216,37 @@ export class IntentService {
       }
     }
 
+    // Merge explicit metadata from the batch (later Patch wins per field).
+    let nextEncoding = buf.encoding;
+    let nextEol = buf.eol;
+    let nextBom = buf.bom;
+    let metaTouched = false;
+    for (const patch of patches) {
+      const m = patch.metadata;
+      if (!m) continue;
+      metaTouched = true;
+      if (m.encoding !== undefined) nextEncoding = m.encoding;
+      if (m.eol !== undefined) nextEol = m.eol;
+      if (m.bom !== undefined) nextBom = m.bom;
+    }
+    // Ordinary Patches without metadata must not alter Encoding/EOL/BOM.
+    if (!metaTouched) {
+      nextEncoding = buf.encoding;
+      nextEol = buf.eol;
+      nextBom = buf.bom;
+    }
+
     const textBefore = buf.text;
     const revisionBefore = buf.revision;
+    const encodingBefore = buf.encoding;
+    const eolBefore = buf.eol;
+    const bomBefore = buf.bom;
     const textAfter = applyEdits(buf.text, relocated);
 
     buf.text = textAfter;
+    buf.encoding = nextEncoding;
+    buf.eol = nextEol;
+    buf.bom = nextBom;
     buf.revision += 1;
 
     const undoGroupId = randomUUID();
@@ -209,6 +257,12 @@ export class IntentService {
       revisionBefore,
       textAfter,
       revisionAfter: buf.revision,
+      encodingBefore,
+      eolBefore,
+      bomBefore,
+      encodingAfter: buf.encoding,
+      eolAfter: buf.eol,
+      bomAfter: buf.bom,
     });
 
     const mainEntry: MainHistoryEntry = {
@@ -219,7 +273,6 @@ export class IntentService {
     };
     this.mainHistory.get(bufferId)!.push(mainEntry);
 
-    // One audit row per Patch in the batch (preserves each original Provenance).
     for (const patch of patches) {
       this.audit.get(bufferId)!.push({
         undoGroupId,
@@ -241,19 +294,26 @@ export class IntentService {
     const buf = this.buffers.get(group.bufferId);
     if (!buf) throw new Error(`unknown Buffer: ${group.bufferId}`);
 
-    // Only the tip UndoGroup may be undone (M2: one step back to pre-Accept).
-    if (buf.text !== group.textAfter || buf.revision !== group.revisionAfter) {
+    if (
+      buf.text !== group.textAfter ||
+      buf.revision !== group.revisionAfter ||
+      buf.encoding !== group.encodingAfter ||
+      buf.eol !== group.eolAfter ||
+      buf.bom !== group.bomAfter
+    ) {
       throw new Error("UndoGroup is not at Buffer tip");
     }
 
     buf.text = group.textBefore;
     buf.revision = group.revisionBefore;
+    buf.encoding = group.encodingBefore;
+    buf.eol = group.eolBefore;
+    buf.bom = group.bomBefore;
     this.undoGroups.delete(undoGroupId);
 
     const main = this.mainHistory.get(group.bufferId)!;
     const idx = main.findIndex((e) => e.undoGroupId === undoGroupId);
     if (idx >= 0) main.splice(idx, 1);
-    // Audit side-car is retained for metrics even after undo.
   }
 
   getMainHistory(bufferId: BufferId): MainHistoryEntry[] {

@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { decodeBytes, encodeText } from "./encoding.js";
 import { IntentService } from "./intent-service.js";
 import type { BufferId, BufferSnapshot } from "./types.js";
 
@@ -23,13 +24,17 @@ export type CloseResult = CloseOk | CloseAsk;
 interface TabState {
   bufferId: BufferId;
   path: string | null;
-  /** Last persisted text (empty string for new untitled). */
+  /** Last persisted logical text (LF-normalized). */
   savedText: string;
+  savedEncoding: string;
+  savedEol: BufferSnapshot["eol"];
+  savedBom: boolean;
 }
 
 /**
  * Notepad-like shell: open Buffers as tabs, hotkey evoke, Path open/save, close prompts.
  * No Workspace / Project / Session noun — just a list of open Buffers.
+ * Path IO respects Buffer Encoding / EOL / BOM metadata (WUF-73).
  */
 export class EditorShell {
   private readonly intent: IntentService;
@@ -52,6 +57,9 @@ export class EditorShell {
       bufferId: buf.id,
       path: null,
       savedText: "",
+      savedEncoding: buf.encoding,
+      savedEol: buf.eol,
+      savedBom: buf.bom,
     });
     this.order.push(buf.id);
     this.activeId = buf.id;
@@ -93,12 +101,20 @@ export class EditorShell {
   }
 
   async openPath(path: string): Promise<BufferSnapshot> {
-    const text = await readFile(path, "utf8");
-    const buf = this.intent.createBuffer(text);
+    const bytes = await readFile(path);
+    const decoded = decodeBytes(bytes);
+    const buf = this.intent.createBuffer(decoded.text, {
+      encoding: decoded.encoding,
+      eol: decoded.eol,
+      bom: decoded.bom,
+    });
     this.tabs.set(buf.id, {
       bufferId: buf.id,
       path,
-      savedText: text,
+      savedText: buf.text,
+      savedEncoding: buf.encoding,
+      savedEol: buf.eol,
+      savedBom: buf.bom,
     });
     this.order.push(buf.id);
     this.activeId = buf.id;
@@ -111,18 +127,17 @@ export class EditorShell {
     if (!tab.path) {
       throw new Error("untitled Buffer has no Path; use saveActiveAs");
     }
-    const text = this.intent.getBuffer(this.activeId).text;
-    await writeFile(tab.path, text, "utf8");
-    tab.savedText = text;
+    await this.writeBufferToPath(this.activeId, tab.path);
+    this.markSaved(this.activeId);
   }
 
   async saveActiveAs(path: string): Promise<void> {
     if (!this.activeId) throw new Error("no active Buffer");
+    this.requireTab(this.activeId);
+    await this.writeBufferToPath(this.activeId, path);
     const tab = this.requireTab(this.activeId);
-    const text = this.intent.getBuffer(this.activeId).text;
-    await writeFile(path, text, "utf8");
     tab.path = path;
-    tab.savedText = text;
+    this.markSaved(this.activeId);
   }
 
   /**
@@ -157,10 +172,35 @@ export class EditorShell {
     return { ok: true, closed: true, asked: true };
   }
 
+  private async writeBufferToPath(
+    bufferId: BufferId,
+    path: string,
+  ): Promise<void> {
+    const buf = this.intent.getBuffer(bufferId);
+    const bytes = encodeText(buf.text, buf.encoding, buf.eol, {
+      bom: buf.bom,
+    });
+    await writeFile(path, bytes);
+  }
+
+  private markSaved(bufferId: BufferId): void {
+    const tab = this.requireTab(bufferId);
+    const buf = this.intent.getBuffer(bufferId);
+    tab.savedText = buf.text;
+    tab.savedEncoding = buf.encoding;
+    tab.savedEol = buf.eol;
+    tab.savedBom = buf.bom;
+  }
+
   private isDirty(bufferId: BufferId): boolean {
     const tab = this.requireTab(bufferId);
-    const text = this.intent.getBuffer(bufferId).text;
-    return text !== tab.savedText;
+    const buf = this.intent.getBuffer(bufferId);
+    return (
+      buf.text !== tab.savedText ||
+      buf.encoding !== tab.savedEncoding ||
+      buf.eol !== tab.savedEol ||
+      buf.bom !== tab.savedBom
+    );
   }
 
   private dropTab(bufferId: BufferId): void {
@@ -183,9 +223,7 @@ export class EditorShell {
     const tab = this.requireTab(bufferId);
     const dirty = this.isDirty(bufferId);
     const untitled = tab.path === null;
-    const title = untitled
-      ? "Untitled"
-      : basename(tab.path!);
+    const title = untitled ? "Untitled" : basename(tab.path!);
     return {
       bufferId,
       title: dirty ? `${title}*` : title,
