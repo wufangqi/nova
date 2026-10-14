@@ -1,5 +1,10 @@
 export { IntentService } from "./intent-service.js";
 export {
+  buildExplanation,
+  isExplainUtterance,
+  resolveAnchor,
+} from "./explanation.js";
+export {
   LocalModelGateway,
   validateModelPatchOutput,
 } from "./model-gateway.js";

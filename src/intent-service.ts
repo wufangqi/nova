@@ -1,16 +1,23 @@
 import { randomUUID } from "node:crypto";
 import {
+  buildExplanation,
+  isExplainUtterance,
+  resolveAnchor,
+} from "./explanation.js";
+import {
   LocalModelGateway,
   validateModelPatchOutput,
   type ModelGateway,
 } from "./model-gateway.js";
 import type {
   AcceptResult,
+  AnchorResolveResult,
   BufferCreateOptions,
   BufferId,
   BufferSnapshot,
   Cost,
   Eol,
+  ExplanationAnchor,
   Intent,
   IntentServiceOptions,
   MainHistoryEntry,
@@ -200,6 +207,7 @@ function scopeSlice(text: string, scope: ResolvedScope): string {
  * WUF-73: Encoding/EOL/BOM metadata; Accept mutates them only when Patch.metadata is set.
  * WUF-74: parse / preview / reject (Cost, Scope, Outbound, no-model guidance).
  * WUF-75: transform Intents via model gateway + deterministic validator.
+ * WUF-76: Explanation previews + safe anchor resolve (no Buffer mutation).
  */
 export class IntentService {
   private buffers = new Map<BufferId, BufferState>();
@@ -331,24 +339,20 @@ export class IntentService {
       hasOutbound: Boolean(outbound?.length),
     };
 
-    if (utterance.startsWith("explain")) {
+    if (isExplainUtterance(intent.utterance)) {
+      // Read-only Explanation — never mutates Buffer; Accept is not used.
       return {
         kind: "explanation",
         previewId,
-        explanation: {
-          summary: `Stub explanation of ${scoped.length} chars in Scope.`,
-          anchors: scoped.length
-            ? [
-                {
-                  start: intent.scope.start,
-                  end: intent.scope.end,
-                  note: "scope",
-                },
-              ]
-            : [],
+        explanation: buildExplanation(buf.text, intent.scope, buf.revision),
+        cost: {
+          ...cost,
+          // Explanations are lighter than transforms.
+          latencyMsEstimate: this.cloudEnabled ? 300 : 20,
         },
-        cost,
-        outbound,
+        outbound: outbound
+          ? outbound.map((o) => ({ ...o, task: "explain" }))
+          : undefined,
       };
     }
 
@@ -422,6 +426,21 @@ export class IntentService {
   /** Discard an outstanding preview; Buffer is never mutated. */
   reject(previewId: PreviewId): void {
     this.outstandingPreviews.delete(previewId);
+  }
+
+  /**
+   * Jump target for an Explanation anchor against the current Buffer.
+   * Valid ⇒ offsets to jump to. Invalid ⇒ distinguishable; never a wrong jump.
+   */
+  resolveExplanationAnchor(
+    bufferId: BufferId,
+    anchor: ExplanationAnchor,
+  ): AnchorResolveResult {
+    const buf = this.buffers.get(bufferId);
+    if (!buf) {
+      return { ok: false, status: "invalid", reason: "unknown" };
+    }
+    return resolveAnchor(buf.text, buf.revision, anchor);
   }
 
   accept(patches: Patch[]): AcceptResult {

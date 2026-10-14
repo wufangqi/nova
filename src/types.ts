@@ -138,10 +138,37 @@ export interface Outbound {
   destination: "cloud";
 }
 
+/** One jump target inside an Explanation, anchored at preview-time revision. */
+export interface ExplanationAnchor {
+  id: string;
+  start: number;
+  end: number;
+  note: string;
+  /** Exact Buffer slice at preview time — used to relocate after edits. */
+  excerpt: string;
+  baseRevision: Revision;
+}
+
 export interface Explanation {
   summary: string;
-  anchors: Array<{ start: number; end: number; note: string }>;
+  anchors: ExplanationAnchor[];
 }
+
+/** Result of resolving an Explanation anchor against the current Buffer. */
+export type AnchorResolveOk = {
+  ok: true;
+  status: "valid";
+  start: number;
+  end: number;
+};
+
+export type AnchorResolveFail = {
+  ok: false;
+  status: "invalid";
+  reason: "reloc_failed" | "stale" | "unknown";
+};
+
+export type AnchorResolveResult = AnchorResolveOk | AnchorResolveFail;
 
 export interface RegexDraft {
   pattern: string;
