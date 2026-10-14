@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import {
+  LocalModelGateway,
+  validateModelPatchOutput,
+  type ModelGateway,
+} from "./model-gateway.js";
 import type {
   AcceptResult,
   BufferCreateOptions,
@@ -23,6 +28,8 @@ import type {
 const DEFAULT_VISIBLE_SAMPLE_CHARS = 4096;
 const MODEL_UNAVAILABLE_GUIDANCE =
   "No local model is installed. Install a local model to run AI Intents, or enable a cloud path. Buffer editing and FindBar still work offline.";
+const VALIDATION_FAILED_GUIDANCE =
+  "Model output failed validation and cannot be Accepted. Edit the Buffer manually, or re-run the Intent.";
 
 interface BufferState {
   id: BufferId;
@@ -191,7 +198,8 @@ function scopeSlice(text: string, scope: ResolvedScope): string {
  * IntentService — single Accept write seam for proposal Patches.
  * WUF-70: Buffer + accept / undo / dual-track Provenance.
  * WUF-73: Encoding/EOL/BOM metadata; Accept mutates them only when Patch.metadata is set.
- * WUF-74: parse / preview / reject stub (deterministic; optional cloud Outbound).
+ * WUF-74: parse / preview / reject (Cost, Scope, Outbound, no-model guidance).
+ * WUF-75: transform Intents via model gateway + deterministic validator.
  */
 export class IntentService {
   private buffers = new Map<BufferId, BufferState>();
@@ -202,12 +210,16 @@ export class IntentService {
   private readonly modelAvailable: boolean;
   private readonly cloudEnabled: boolean;
   private readonly visibleSampleChars: number;
+  private readonly modelGateway: ModelGateway;
 
   constructor(options: IntentServiceOptions = {}) {
     this.modelAvailable = options.modelAvailable ?? true;
     this.cloudEnabled = options.cloudEnabled ?? false;
     this.visibleSampleChars =
       options.visibleSampleChars ?? DEFAULT_VISIBLE_SAMPLE_CHARS;
+    this.modelGateway =
+      (options.modelGateway as ModelGateway | undefined) ??
+      new LocalModelGateway();
   }
 
   createBuffer(text = "", options: BufferCreateOptions = {}): BufferSnapshot {
@@ -280,8 +292,10 @@ export class IntentService {
   }
 
   /**
-   * Deterministic stub preview: Cost always present; Outbound when cloudEnabled.
+   * Preview: transform Intents go through model gateway + validator.
+   * Cost always present on success; Outbound when cloudEnabled.
    * Missing local model ⇒ structured error with install guidance (ADR-0003).
+   * Invalid model output ⇒ validation_failed (manual edit exit; never Acceptable).
    */
   preview(intent: Intent): PreviewResult {
     const buf = this.buffers.get(intent.bufferId);
@@ -300,6 +314,7 @@ export class IntentService {
     const previewId = randomUUID();
     this.outstandingPreviews.set(previewId, true);
 
+    // Cloud path: noticeability even when a local gateway is injected for tests.
     const outbound: Outbound[] | undefined = this.cloudEnabled
       ? [
           {
@@ -348,27 +363,50 @@ export class IntentService {
       };
     }
 
-    // Default stub transform: uppercase the Scope (covers "uppercase" demos).
-    const replacement = scoped.toUpperCase();
+    // Transform path: real/local model → validate → Patch preview.
+    const modelOut = this.modelGateway.transform({
+      utterance: intent.utterance,
+      scopeText: scoped,
+      scope: intent.scope,
+      bufferText: buf.text,
+      bufferRevision: buf.revision,
+    });
+
+    const validated = validateModelPatchOutput(
+      modelOut.raw,
+      intent.scope,
+      buf.text.length,
+    );
+    if (!validated.ok) {
+      this.outstandingPreviews.delete(previewId);
+      return {
+        kind: "error",
+        reason: "validation_failed",
+        guidance: VALIDATION_FAILED_GUIDANCE,
+        manualEditOk: true,
+      };
+    }
+
     const patch: Patch = {
       bufferId: buf.id,
       baseRevision: buf.revision,
-      edits: [
-        {
-          start: intent.scope.start,
-          end: intent.scope.end,
-          replacement,
-          before:
-            intent.scope.start > 0
-              ? buf.text.slice(Math.max(0, intent.scope.start - 8), intent.scope.start)
-              : "",
-          after: buf.text.slice(
-            intent.scope.end,
-            Math.min(buf.text.length, intent.scope.end + 8),
-          ),
-        },
-      ],
-      provenance: { source: "ai", label: "stub" },
+      edits: validated.edits.map((e) => ({
+        start: e.start,
+        end: e.end,
+        replacement: e.replacement,
+        before:
+          e.start > 0
+            ? buf.text.slice(Math.max(0, e.start - 8), e.start)
+            : "",
+        after: buf.text.slice(
+          e.end,
+          Math.min(buf.text.length, e.end + 8),
+        ),
+      })),
+      provenance: {
+        source: "ai",
+        label: this.modelGateway.id,
+      },
       intentId: intent.id,
     };
 

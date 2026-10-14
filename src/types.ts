@@ -174,8 +174,13 @@ export type PreviewOk =
 
 export type PreviewFail = {
   kind: "error";
-  reason: "model_unavailable";
+  reason: "model_unavailable" | "validation_failed";
   guidance: string;
+  /**
+   * When true, caller should leave the user on the Buffer to edit by hand
+   * (no Acceptable Patch was produced).
+   */
+  manualEditOk?: boolean;
 };
 
 export type PreviewResult = PreviewOk | PreviewFail;
@@ -188,11 +193,29 @@ export interface ParseInput {
   visibleWindow?: VisibleWindow;
 }
 
+/** Injected model backend for transform Intents (WUF-75). */
+export interface ModelGatewayLike {
+  id: string;
+  offline: boolean;
+  transform(req: {
+    utterance: string;
+    scopeText: string;
+    scope: ResolvedScope;
+    bufferText: string;
+    bufferRevision: number;
+  }): { raw: string };
+}
+
 export interface IntentServiceOptions {
   /** When false, AI preview fails with install guidance (ADR-0003). Default true. */
   modelAvailable?: boolean;
-  /** When true, stub routes via cloud and surfaces Outbound. Default false. */
+  /** When true, routes via cloud and surfaces Outbound. Default false. */
   cloudEnabled?: boolean;
   /** Max chars for default visible sample. Default 4096. */
   visibleSampleChars?: number;
+  /**
+   * Model gateway for transform Intents.
+   * Default when modelAvailable: LocalModelGateway (offline eval path).
+   */
+  modelGateway?: ModelGatewayLike;
 }

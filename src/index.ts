@@ -1,4 +1,14 @@
 export { IntentService } from "./intent-service.js";
+export {
+  LocalModelGateway,
+  validateModelPatchOutput,
+} from "./model-gateway.js";
+export type {
+  ModelGateway,
+  ModelTransformRequest,
+  ModelTransformRaw,
+  ValidateResult,
+} from "./model-gateway.js";
 export { EditorShell } from "./editor-shell.js";
 export { FindBar } from "./find-bar.js";
 export { MojibakeRepair } from "./mojibake-repair.js";
