@@ -75,7 +75,7 @@ type PreviewResult =
   | {
       kind: "regex_draft";
       previewId: string;
-      draft: { pattern: string };
+      draft: { pattern: string; replacement?: string; flags?: string };
       cost: Cost;
       outbound?: Outbound[];
     }
@@ -95,6 +95,43 @@ type PreviewIntentResult = {
 type AcceptIpcResult = {
   accept: { ok: true; undoGroupId: string } | { ok: false; reason: string };
   buffers: BufferSnapshot[];
+};
+
+type FindHit = {
+  start: number;
+  end: number;
+  match: string;
+  groups: Record<number, string>;
+};
+
+type FindIpcResult = {
+  hits: FindHit[];
+  count: number;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+type PreviewReplaceIpcResult = {
+  preview:
+    | { ok: true; patches: Patch[] }
+    | {
+        ok: false;
+        reason: string;
+      };
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+type ReplaceAcceptIpcResult = {
+  accept: { ok: true; undoGroupId: string } | { ok: false; reason: string };
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+type ApplyDraftIpcResult = {
+  draft: { pattern: string; replacement?: string; flags?: string };
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
 };
 
 let applyingRemote = false;
@@ -177,10 +214,79 @@ function editorSelection():
   return undefined;
 }
 
+function findScope():
+  | { kind: "buffer" }
+  | { kind: "range"; start: number; end: number } {
+  const selection = editorSelection();
+  if (selection) {
+    return { kind: "range", start: selection.start, end: selection.end };
+  }
+  return { kind: "buffer" };
+}
+
+function findFlags(): { i?: boolean; m?: boolean; s?: boolean } {
+  return {
+    i: el<HTMLInputElement>("find-flag-i").checked || undefined,
+    m: el<HTMLInputElement>("find-flag-m").checked || undefined,
+    s: el<HTMLInputElement>("find-flag-s").checked || undefined,
+  };
+}
+
+function findParams(extra: { pattern?: string; replacement?: string } = {}) {
+  const pattern =
+    extra.pattern ?? el<HTMLInputElement>("find-pattern").value;
+  const replacement =
+    extra.replacement ?? el<HTMLInputElement>("find-replacement").value;
+  return {
+    pattern: pattern.length > 0 ? pattern : undefined,
+    replacement: replacement.length > 0 ? replacement : undefined,
+    flags: findFlags(),
+    scope: findScope(),
+  };
+}
+
+function setFindReplaceAccept(enabled: boolean) {
+  el<HTMLButtonElement>("find-replace-accept").disabled = !enabled;
+}
+
+function clearFindHits() {
+  setFindReplaceAccept(false);
+  const hitsEl = el<HTMLElement>("find-hits");
+  hitsEl.hidden = true;
+  hitsEl.textContent = "";
+}
+
+function fillFindBarFromDraft(draft: {
+  pattern: string;
+  replacement?: string;
+  flags?: string;
+}) {
+  el<HTMLInputElement>("find-pattern").value = draft.pattern;
+  el<HTMLInputElement>("find-replacement").value = draft.replacement ?? "";
+  const flags = draft.flags ?? "";
+  el<HTMLInputElement>("find-flag-i").checked = flags.includes("i");
+  el<HTMLInputElement>("find-flag-m").checked = flags.includes("m");
+  el<HTMLInputElement>("find-flag-s").checked = flags.includes("s");
+}
+
+function formatFindHits(hits: FindHit[], count: number): string {
+  if (count === 0) return "0 hits";
+  const lines = hits.slice(0, 50).map((h, i) => {
+    const groups =
+      Object.keys(h.groups).length > 0
+        ? ` groups=${JSON.stringify(h.groups)}`
+        : "";
+    return `${i + 1}. [${h.start},${h.end}) ${JSON.stringify(h.match)}${groups}`;
+  });
+  if (count > 50) lines.push(`…and ${count - 50} more`);
+  return `${count} hit${count === 1 ? "" : "s"}\n${lines.join("\n")}`;
+}
+
 async function evoke() {
   const result = await invoke<ShellBufferResult>("evoke_cmd");
   applyState(result.buffer, result.tabs);
   clearPreviewPanel();
+  clearFindHits();
   setStatus(`New untitled Buffer (${result.buffer.id.slice(0, 8)}…)`);
   el<HTMLTextAreaElement>("editor").focus();
 }
@@ -190,6 +296,7 @@ async function activateTab(id: string) {
   const result = await invoke<ShellBufferResult>("activate_tab_cmd", { id });
   applyState(result.buffer, result.tabs);
   clearPreviewPanel();
+  clearFindHits();
   setStatus(`Switched to ${result.tabs.find((t) => t.active)?.title ?? id}`);
 }
 
@@ -354,10 +461,93 @@ async function runPreview() {
       return;
     }
 
+    // RegexDraft fills FindBar only — never Accepts into Buffer.
+    const draft = result.preview.draft;
+    await invoke<ApplyDraftIpcResult>("apply_draft_cmd", { draft });
+    fillFindBarFromDraft(draft);
+    clearFindHits();
     diffEl.hidden = false;
-    diffEl.textContent = `RegexDraft: /${result.preview.draft.pattern}/`;
+    diffEl.textContent = `RegexDraft filled FindBar: /${draft.pattern}/${draft.flags ?? ""}${
+      draft.replacement !== undefined ? ` → ${JSON.stringify(draft.replacement)}` : ""
+    }\nBuffer unchanged — use Find / Preview replace / Replace Accept.`;
     setIntentActions({ accept: false, reject: true });
-    setStatus("RegexDraft preview (fills FindBar later — Reject to dismiss)");
+    setStatus("RegexDraft → FindBar (no Buffer write; explicit replace to Accept)");
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function runFind() {
+  if (!activeId) {
+    setStatus("No active Buffer for Find");
+    return;
+  }
+  try {
+    const result = await invoke<FindIpcResult>("find_cmd", {
+      params: findParams(),
+    });
+    applyState(result.buffer, result.tabs);
+    setFindReplaceAccept(false);
+    const hitsEl = el<HTMLElement>("find-hits");
+    hitsEl.hidden = false;
+    hitsEl.textContent = formatFindHits(result.hits, result.count);
+    setStatus(`Find: ${result.count} hit${result.count === 1 ? "" : "s"}`);
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function previewFindReplace() {
+  if (!activeId) {
+    setStatus("No active Buffer for replace preview");
+    return;
+  }
+  try {
+    const result = await invoke<PreviewReplaceIpcResult>("preview_replace_cmd", {
+      params: findParams(),
+    });
+    applyState(result.buffer, result.tabs);
+    const hitsEl = el<HTMLElement>("find-hits");
+    hitsEl.hidden = false;
+    if (!result.preview.ok) {
+      setFindReplaceAccept(false);
+      hitsEl.textContent = `Replace preview failed: ${result.preview.reason}`;
+      setStatus(`Replace preview: ${result.preview.reason}`);
+      return;
+    }
+    setFindReplaceAccept(true);
+    hitsEl.textContent = formatPatchDiff(
+      result.buffer.text,
+      result.preview.patches,
+    );
+    setStatus(
+      "Replace preview ready — Replace Accept writes via IntentService (UndoGroup)",
+    );
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function acceptFindReplace() {
+  if (!activeId) {
+    setStatus("No active Buffer for replace");
+    return;
+  }
+  try {
+    const result = await invoke<ReplaceAcceptIpcResult>("replace_accept_cmd", {
+      params: findParams(),
+    });
+    if (!result.accept.ok) {
+      setStatus(`Replace Accept failed: ${result.accept.reason}`);
+      return;
+    }
+    lastUndoGroupId = result.accept.undoGroupId;
+    applyState(result.buffer, result.tabs);
+    clearFindHits();
+    setIntentActions({ undo: true });
+    setStatus(
+      `FindBar replace Accepted — UndoGroup ${lastUndoGroupId.slice(0, 8)}…`,
+    );
   } catch (err) {
     setStatus(String(err));
   }
@@ -469,6 +659,22 @@ window.addEventListener("DOMContentLoaded", () => {
     if (ev.key === "Enter") {
       ev.preventDefault();
       void runPreview();
+    }
+  });
+
+  el<HTMLButtonElement>("find-go").addEventListener("click", () => {
+    void runFind();
+  });
+  el<HTMLButtonElement>("find-preview-replace").addEventListener("click", () => {
+    void previewFindReplace();
+  });
+  el<HTMLButtonElement>("find-replace-accept").addEventListener("click", () => {
+    void acceptFindReplace();
+  });
+  el<HTMLInputElement>("find-pattern").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      void runFind();
     }
   });
 

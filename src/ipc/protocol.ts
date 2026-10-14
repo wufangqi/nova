@@ -1,6 +1,6 @@
 /**
- * WUF-81/82/84 — Tauri IPC request/response shapes.
- * Thin facade over IntentService + EditorShell; no alternate Accept path.
+ * WUF-81/82/84/85 — Tauri IPC request/response shapes.
+ * Thin facade over IntentService + EditorShell + FindBar; no alternate Accept path.
  */
 import type {
   AcceptResult,
@@ -10,11 +10,18 @@ import type {
   Patch,
   PreviewId,
   PreviewResult,
+  RegexDraft,
   Selection,
   UndoGroupId,
   VisibleWindow,
 } from "../types.js";
 import type { CloseResult, TabInfo } from "../editor-shell.js";
+import type {
+  FindHit,
+  PreviewReplaceResult,
+  TextScope,
+} from "../find-bar.js";
+import type { PcreFlags } from "../pcre.js";
 
 export type IpcMethod =
   | "create_buffer"
@@ -33,7 +40,12 @@ export type IpcMethod =
   | "preview_intent"
   | "reject_preview"
   | "undo"
-  | "set_cloud_enabled";
+  | "set_cloud_enabled"
+  | "find"
+  | "preview_replace"
+  | "replace_accept"
+  | "apply_draft"
+  | "get_draft";
 
 export type CreateBufferRequest = {
   method: "create_buffer";
@@ -126,6 +138,40 @@ export type SetCloudEnabledRequest = {
   params: { enabled: boolean };
 };
 
+/** Shared FindBar params — omit fields to use the loaded draft / active Buffer. */
+export type FindBarParams = {
+  bufferId?: string;
+  pattern?: string;
+  replacement?: string;
+  flags?: PcreFlags;
+  scope?: TextScope;
+};
+
+export type FindRequest = {
+  method: "find";
+  params: FindBarParams;
+};
+
+export type PreviewReplaceRequest = {
+  method: "preview_replace";
+  params: FindBarParams;
+};
+
+export type ReplaceAcceptRequest = {
+  method: "replace_accept";
+  params: FindBarParams;
+};
+
+export type ApplyDraftRequest = {
+  method: "apply_draft";
+  params: { draft: RegexDraft };
+};
+
+export type GetDraftRequest = {
+  method: "get_draft";
+  params: Record<string, never> | {};
+};
+
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
@@ -143,7 +189,12 @@ export type IpcRequest =
   | PreviewIntentRequest
   | RejectPreviewRequest
   | UndoRequest
-  | SetCloudEnabledRequest;
+  | SetCloudEnabledRequest
+  | FindRequest
+  | PreviewReplaceRequest
+  | ReplaceAcceptRequest
+  | ApplyDraftRequest
+  | GetDraftRequest;
 
 export type IpcOk<T> = { ok: true; result: T };
 export type IpcErr = { ok: false; error: string };
@@ -194,4 +245,33 @@ export type UndoIpcResult = {
 
 export type SetCloudEnabledResult = {
   cloudEnabled: boolean;
+};
+
+export type FindIpcResult = {
+  hits: FindHit[];
+  count: number;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type PreviewReplaceIpcResult = {
+  preview: PreviewReplaceResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type ReplaceAcceptIpcResult = {
+  accept: AcceptResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type ApplyDraftIpcResult = {
+  draft: RegexDraft;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+export type GetDraftIpcResult = {
+  draft: RegexDraft;
 };

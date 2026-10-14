@@ -1,9 +1,10 @@
 mod intent_bridge;
 
 use intent_bridge::{
-    accept, activate_tab, confirm_close, create_buffer, edit_active, evoke, get_buffer,
-    get_shell_state, list_tabs, open_path, preview_intent, reject_preview, request_close,
-    save_active, save_active_as, set_cloud_enabled, undo, IntentBridge, SharedBridge,
+    accept, activate_tab, apply_draft, confirm_close, create_buffer, edit_active, evoke, find,
+    get_buffer, get_draft, get_shell_state, list_tabs, open_path, preview_intent, preview_replace,
+    reject_preview, replace_accept, request_close, save_active, save_active_as, set_cloud_enabled,
+    undo, IntentBridge, SharedBridge,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -135,6 +136,43 @@ fn set_cloud_enabled_cmd(
     set_cloud_enabled(&bridge, enabled)
 }
 
+#[tauri::command]
+fn find_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    find(&bridge, params.unwrap_or(Value::Object(Default::default())))
+}
+
+#[tauri::command]
+fn preview_replace_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    preview_replace(&bridge, params.unwrap_or(Value::Object(Default::default())))
+}
+
+#[tauri::command]
+fn replace_accept_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    params: Option<Value>,
+) -> Result<Value, String> {
+    replace_accept(&bridge, params.unwrap_or(Value::Object(Default::default())))
+}
+
+#[tauri::command]
+fn apply_draft_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    draft: Value,
+) -> Result<Value, String> {
+    apply_draft(&bridge, draft)
+}
+
+#[tauri::command]
+fn get_draft_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String> {
+    get_draft(&bridge)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -163,7 +201,12 @@ pub fn run() {
             preview_intent_cmd,
             reject_preview_cmd,
             undo_cmd,
-            set_cloud_enabled_cmd
+            set_cloud_enabled_cmd,
+            find_cmd,
+            preview_replace_cmd,
+            replace_accept_cmd,
+            apply_draft_cmd,
+            get_draft_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

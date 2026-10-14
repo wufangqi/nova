@@ -31,6 +31,45 @@
         disabled
       ></textarea>
 
+      <section class="find-panel" aria-label="FindBar">
+        <div class="find-bar">
+          <label class="find-field">
+            <span>Find</span>
+            <input
+              id="find-pattern"
+              type="text"
+              placeholder="PCRE pattern"
+              spellcheck="false"
+            />
+          </label>
+          <label class="find-field">
+            <span>Replace</span>
+            <input
+              id="find-replacement"
+              type="text"
+              placeholder="replacement ($1…)"
+              spellcheck="false"
+            />
+          </label>
+          <label class="flag-toggle" title="Case insensitive">
+            <input id="find-flag-i" type="checkbox" />
+            <span>i</span>
+          </label>
+          <label class="flag-toggle" title="Multiline">
+            <input id="find-flag-m" type="checkbox" />
+            <span>m</span>
+          </label>
+          <label class="flag-toggle" title="Dotall">
+            <input id="find-flag-s" type="checkbox" />
+            <span>s</span>
+          </label>
+          <button type="button" id="find-go">Find</button>
+          <button type="button" id="find-preview-replace">Preview replace</button>
+          <button type="button" id="find-replace-accept" disabled>Replace Accept</button>
+        </div>
+        <pre id="find-hits" class="find-hits" hidden aria-live="polite"></pre>
+      </section>
+
       <section class="intent-panel" aria-label="Intent preview">
         <div class="intent-bar">
           <label class="intent-field">
@@ -38,7 +77,7 @@
             <input
               id="intent-input"
               type="text"
-              placeholder="e.g. uppercase"
+              placeholder="e.g. uppercase / regex a(\\d)"
               spellcheck="false"
             />
           </label>

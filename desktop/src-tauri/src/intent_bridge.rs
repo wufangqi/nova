@@ -295,6 +295,33 @@ pub fn set_cloud_enabled(bridge: &SharedBridge, enabled: bool) -> Result<Value, 
     unwrap_ipc(response)
 }
 
+pub fn find(bridge: &SharedBridge, params: Value) -> Result<Value, String> {
+    call_params(bridge, "find", params)
+}
+
+pub fn preview_replace(bridge: &SharedBridge, params: Value) -> Result<Value, String> {
+    call_params(bridge, "preview_replace", params)
+}
+
+pub fn replace_accept(bridge: &SharedBridge, params: Value) -> Result<Value, String> {
+    call_params(bridge, "replace_accept", params)
+}
+
+pub fn apply_draft(bridge: &SharedBridge, draft: Value) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": "apply_draft",
+        "params": { "draft": draft }
+    }))?;
+    unwrap_ipc(response)
+}
+
+pub fn get_draft(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "get_draft")
+}
+
 fn call_empty(bridge: &SharedBridge, method: &str) -> Result<Value, String> {
     let mut guard = bridge
         .lock()
@@ -302,6 +329,17 @@ fn call_empty(bridge: &SharedBridge, method: &str) -> Result<Value, String> {
     let response = guard.call(json!({
         "method": method,
         "params": {}
+    }))?;
+    unwrap_ipc(response)
+}
+
+fn call_params(bridge: &SharedBridge, method: &str, params: Value) -> Result<Value, String> {
+    let mut guard = bridge
+        .lock()
+        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let response = guard.call(json!({
+        "method": method,
+        "params": params
     }))?;
     unwrap_ipc(response)
 }
