@@ -246,3 +246,30 @@ export interface IntentServiceOptions {
    */
   modelGateway?: ModelGatewayLike;
 }
+
+/** Outstanding preview lookup for Action save (WUF-89). */
+export type OutstandingPreviewRecord =
+  | { kind: "patches"; utterance: string }
+  | { kind: "explanation"; utterance: string }
+  | { kind: "regex_draft"; utterance: string; draft: RegexDraft };
+
+/** WUF-89 — Action catalog (save / list / persist). */
+
+export type ActionId = string;
+
+export interface SavedAction {
+  id: ActionId;
+  /** Default = source Intent utterance; renamable later (WUF-90). */
+  displayName: string;
+  /** Compiled copy at save time; immutable after save. */
+  draft: RegexDraft;
+  /** ISO-8601 timestamp. */
+  createdAt: string;
+}
+
+export type SaveActionOk = { ok: true; action: SavedAction };
+export type SaveActionFail = {
+  ok: false;
+  reason: "not_regex_draft" | "cap_exceeded" | "stale_preview";
+};
+export type SaveActionResult = SaveActionOk | SaveActionFail;

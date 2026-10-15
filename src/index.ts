@@ -1,4 +1,11 @@
 export { IntentService } from "./intent-service.js";
+export {
+  ActionService,
+  MemoryActionStore,
+  FileActionStore,
+  ACTION_SOFT_CAP,
+} from "./action-service.js";
+export type { ActionStore, ActionServiceOptions } from "./action-service.js";
 export { IntentIpcHost } from "./ipc/host.js";
 export type {
   IpcMethod,
