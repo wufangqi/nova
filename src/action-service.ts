@@ -1,18 +1,20 @@
 /**
- * Action facade — save / list / persist (WUF-89).
- * Soft-cap / rename / delete / preview_run land in later Work tickets.
+ * Action facade — save / list / persist (WUF-89); rename / delete / soft cap (WUF-90).
+ * preview_run lands in a later Work ticket.
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { IntentService } from "./intent-service.js";
 import type {
+  ActionId,
+  MutateActionResult,
   PreviewId,
   SaveActionResult,
   SavedAction,
 } from "./types.js";
 
-/** Soft catalog size (~50). Enforced on save; rename/delete UX is WUF-90. */
+/** Soft catalog size (~50). Enforced on save. */
 export const ACTION_SOFT_CAP = 50;
 
 const STORE_FILE = "actions.json";
@@ -126,6 +128,32 @@ export class ActionService {
   /** Install-global catalog; recent-first (stable muscle memory). */
   list(): SavedAction[] {
     return this.actions.map(cloneAction);
+  }
+
+  /**
+   * Rename display name only — compiled RegexDraft stays immutable.
+   * Duplicate display names are allowed.
+   */
+  rename(id: ActionId, displayName: string): MutateActionResult {
+    const action = this.actions.find((a) => a.id === id);
+    if (!action) {
+      return { ok: false, reason: "not_found" };
+    }
+    const next = displayName.trim() || action.displayName;
+    action.displayName = next;
+    this.store.saveAll(this.actions);
+    return { ok: true };
+  }
+
+  /** Remove from install-global catalog. */
+  delete(id: ActionId): MutateActionResult {
+    const index = this.actions.findIndex((a) => a.id === id);
+    if (index < 0) {
+      return { ok: false, reason: "not_found" };
+    }
+    this.actions.splice(index, 1);
+    this.store.saveAll(this.actions);
+    return { ok: true };
   }
 
   private sortRecentFirst(): void {

@@ -1,7 +1,7 @@
 /**
- * WUF-89 contract: Action catalog — save from RegexDraft / list / persist.
+ * Action catalog contracts (WUF-89 save/list/persist; WUF-90 rename/delete/cap).
  * Seam: ActionService (+ injectable store) over IntentService previews.
- * No UI; no preview_run / rename / delete (later tickets).
+ * No UI; no preview_run (later tickets).
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -172,5 +172,158 @@ describe("save eligibility failures are distinguishable", () => {
     if (unknown.ok) return;
     assert.equal(unknown.reason, "stale_preview");
     assert.equal(actions.list().length, 0);
+  });
+});
+
+describe("rename changes display name only", () => {
+  it("updates displayName and leaves compiled RegexDraft untouched", () => {
+    const intent = new IntentService({ modelAvailable: true });
+    const actions = new ActionService(intent, new MemoryActionStore());
+    const buf = intent.createBuffer("a1");
+
+    const preview = intent.preview(
+      intent.parse({ bufferId: buf.id, utterance: "regex a(\\d)" }),
+    );
+    assert.equal(preview.kind, "regex_draft");
+    if (preview.kind !== "regex_draft") return;
+
+    const saved = actions.saveFromRegexDraft({ previewId: preview.previewId });
+    assert.equal(saved.ok, true);
+    if (!saved.ok) return;
+
+    const draftBefore = {
+      pattern: saved.action.draft.pattern,
+      replacement: saved.action.draft.replacement,
+      flags: saved.action.draft.flags,
+    };
+
+    const renamed = actions.rename(saved.action.id, "short label");
+    assert.equal(renamed.ok, true);
+
+    const listed = actions.list();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]!.displayName, "short label");
+    assert.deepEqual(listed[0]!.draft, draftBefore);
+    assert.equal(listed[0]!.id, saved.action.id);
+    assert.equal(listed[0]!.createdAt, saved.action.createdAt);
+  });
+
+  it("fails with not_found for unknown id", () => {
+    const intent = new IntentService({ modelAvailable: true });
+    const actions = new ActionService(intent, new MemoryActionStore());
+
+    const renamed = actions.rename("missing-action-id", "nope");
+    assert.equal(renamed.ok, false);
+    if (renamed.ok) return;
+    assert.equal(renamed.reason, "not_found");
+  });
+});
+
+describe("delete removes from catalog", () => {
+  it("list no longer includes a deleted Action", () => {
+    const intent = new IntentService({ modelAvailable: true });
+    const actions = new ActionService(intent, new MemoryActionStore());
+    const buf = intent.createBuffer("x");
+
+    const preview = intent.preview(
+      intent.parse({ bufferId: buf.id, utterance: "regex foo" }),
+    );
+    assert.equal(preview.kind, "regex_draft");
+    if (preview.kind !== "regex_draft") return;
+
+    const saved = actions.saveFromRegexDraft({ previewId: preview.previewId });
+    assert.equal(saved.ok, true);
+    if (!saved.ok) return;
+
+    const deleted = actions.delete(saved.action.id);
+    assert.equal(deleted.ok, true);
+    assert.equal(actions.list().length, 0);
+  });
+
+  it("fails with not_found for unknown id (distinguishable)", () => {
+    const intent = new IntentService({ modelAvailable: true });
+    const actions = new ActionService(intent, new MemoryActionStore());
+
+    const deleted = actions.delete("no-such-action");
+    assert.equal(deleted.ok, false);
+    if (deleted.ok) return;
+    assert.equal(deleted.reason, "not_found");
+  });
+});
+
+describe("soft cap on save", () => {
+  it("refuses save past soft cap with cap_exceeded", () => {
+    const intent = new IntentService({ modelAvailable: true });
+    const actions = new ActionService(intent, new MemoryActionStore(), {
+      softCap: 2,
+    });
+    const buf = intent.createBuffer("a1 b2 c3");
+
+    for (let i = 0; i < 2; i++) {
+      const preview = intent.preview(
+        intent.parse({
+          bufferId: buf.id,
+          utterance: `regex item${i}`,
+        }),
+      );
+      assert.equal(preview.kind, "regex_draft");
+      if (preview.kind !== "regex_draft") return;
+      const saved = actions.saveFromRegexDraft({
+        previewId: preview.previewId,
+      });
+      assert.equal(saved.ok, true);
+    }
+
+    const overflowPreview = intent.preview(
+      intent.parse({ bufferId: buf.id, utterance: "regex overflow" }),
+    );
+    assert.equal(overflowPreview.kind, "regex_draft");
+    if (overflowPreview.kind !== "regex_draft") return;
+
+    const overflow = actions.saveFromRegexDraft({
+      previewId: overflowPreview.previewId,
+    });
+    assert.equal(overflow.ok, false);
+    if (overflow.ok) return;
+    assert.equal(overflow.reason, "cap_exceeded");
+    assert.equal(actions.list().length, 2);
+  });
+});
+
+describe("duplicate display names are allowed", () => {
+  it("two Actions may share the same displayName", () => {
+    const intent = new IntentService({ modelAvailable: true });
+    const actions = new ActionService(intent, new MemoryActionStore());
+    const buf = intent.createBuffer("a1 b2");
+    const sameName = "shared label";
+
+    const firstPreview = intent.preview(
+      intent.parse({ bufferId: buf.id, utterance: "regex a(\\d)" }),
+    );
+    assert.equal(firstPreview.kind, "regex_draft");
+    if (firstPreview.kind !== "regex_draft") return;
+    const first = actions.saveFromRegexDraft({
+      previewId: firstPreview.previewId,
+      displayName: sameName,
+    });
+    assert.equal(first.ok, true);
+    if (!first.ok) return;
+
+    const secondPreview = intent.preview(
+      intent.parse({ bufferId: buf.id, utterance: "regex b(\\d)" }),
+    );
+    assert.equal(secondPreview.kind, "regex_draft");
+    if (secondPreview.kind !== "regex_draft") return;
+    const second = actions.saveFromRegexDraft({
+      previewId: secondPreview.previewId,
+      displayName: sameName,
+    });
+    assert.equal(second.ok, true);
+    if (!second.ok) return;
+
+    assert.notEqual(first.action.id, second.action.id);
+    const listed = actions.list();
+    assert.equal(listed.length, 2);
+    assert.equal(listed.filter((a) => a.displayName === sameName).length, 2);
   });
 });

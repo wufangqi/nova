@@ -259,7 +259,7 @@ export type ActionId = string;
 
 export interface SavedAction {
   id: ActionId;
-  /** Default = source Intent utterance; renamable later (WUF-90). */
+  /** Default = source Intent utterance; renamable (display name only). */
   displayName: string;
   /** Compiled copy at save time; immutable after save. */
   draft: RegexDraft;
@@ -273,3 +273,8 @@ export type SaveActionFail = {
   reason: "not_regex_draft" | "cap_exceeded" | "stale_preview";
 };
 export type SaveActionResult = SaveActionOk | SaveActionFail;
+
+/** WUF-90 — rename / delete catalog mutations. */
+export type MutateActionOk = { ok: true };
+export type MutateActionFail = { ok: false; reason: "not_found" };
+export type MutateActionResult = MutateActionOk | MutateActionFail;
