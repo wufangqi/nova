@@ -1,15 +1,15 @@
 /**
- * WUF-72 contract: FindBar PCRE find + replace-over-Scope → Accept.
+ * WUF-72 / WUF-100 contract: FindBar core-side Rust regex find + replace → Accept.
  * Seam: FindBar produces hits / Patches; writes only via IntentService.accept.
- * No chat / Intent parse-preview required.
+ * No chat / Intent parse-preview required. Single Find engine (no JS+Rust dual).
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { FindBar } from "../src/find-bar.js";
 import { IntentService } from "../src/intent-service.js";
 
-describe("FindBar PCRE find (hit feedback)", () => {
-  it("returns ordered hits with count for a PCRE pattern", () => {
+describe("FindBar core regex find (hit feedback)", () => {
+  it("returns ordered hits with count, offsets, and line", () => {
     const intent = new IntentService();
     const buf = intent.createBuffer("alpha beta alpha gamma");
     const bar = new FindBar(intent);
@@ -26,29 +26,39 @@ describe("FindBar PCRE find (hit feedback)", () => {
       end: 5,
       match: "alpha",
       groups: {},
+      line: 0,
+      column: 0,
     });
     assert.deepEqual(result.hits[1], {
       start: 11,
       end: 16,
       match: "alpha",
       groups: {},
+      line: 0,
+      column: 11,
     });
   });
 
-  it("supports PCRE features JS shares (lookahead / groups) with hit feedback", () => {
+  it("supports capture groups (lookaround is known PCRE debt — rejected by Rust regex)", () => {
     const intent = new IntentService();
     const buf = intent.createBuffer("x12 y34 x56");
     const bar = new FindBar(intent);
 
-    const result = bar.find({
+    const withGroups = bar.find({
+      bufferId: buf.id,
+      pattern: "x(\\d+)",
+    });
+    assert.equal(withGroups.count, 2);
+    assert.equal(withGroups.hits[0]!.match, "x12");
+    assert.equal(withGroups.hits[0]!.groups[1], "12");
+    assert.equal(withGroups.hits[1]!.match, "x56");
+
+    const lookaround = bar.find({
       bufferId: buf.id,
       pattern: "x(\\d+)(?=\\s|$)",
     });
-
-    assert.equal(result.count, 2);
-    assert.equal(result.hits[0]!.match, "x12");
-    assert.equal(result.hits[0]!.groups[1], "12");
-    assert.equal(result.hits[1]!.match, "x56");
+    assert.ok(lookaround.error);
+    assert.equal(lookaround.count, 0);
   });
 
   it("limits find to Scope range (not whole Buffer)", () => {

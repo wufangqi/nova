@@ -7,7 +7,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { FindBar } from "../src/find-bar.js";
 import { IntentService } from "../src/intent-service.js";
-import { compilePcre } from "../src/pcre.js";
 
 describe("NL → RegexDraft fills FindBar", () => {
   it("NL→regex Intent produces RegexDraft and populates FindBar", () => {
@@ -153,24 +152,22 @@ describe("explicit replace over Scope then Accept", () => {
 });
 
 describe("FindBar and RegexDraft share one regex surface", () => {
-  it("draft pattern compiles with the same compilePcre dialect FindBar uses", () => {
+  it("draft pattern fills FindBar and runs on the single Rust Find engine", () => {
     const svc = new IntentService({ modelAvailable: true });
     const buf = svc.createBuffer("x12 y34 x56");
     const bar = new FindBar(svc);
 
     const intent = svc.parse({
       bufferId: buf.id,
-      utterance: "regex x(\\d+)(?=\\s|$)",
+      utterance: "regex x(\\d+)",
     });
     const preview = svc.preview(intent);
     assert.equal(preview.kind, "regex_draft");
     if (preview.kind !== "regex_draft") return;
 
-    // Shared engine seam — same compile as FindBar.
-    const re = compilePcre(preview.draft.pattern, { i: false });
-    assert.ok(re.global);
-
+    // Shared surface: draft pattern/flags populate FindBar; scan is Rust regex only.
     bar.applyDraft(preview.draft);
+    assert.equal(bar.getDraft().pattern, preview.draft.pattern);
     const hits = bar.find({ bufferId: buf.id });
     assert.equal(hits.count, 2);
     assert.equal(hits.hits[0]!.groups[1], "12");

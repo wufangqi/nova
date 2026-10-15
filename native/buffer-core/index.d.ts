@@ -56,3 +56,44 @@ export interface UndoResult {
 }
 /** Undo one Accept UndoGroup if it is still at Buffer tip. */
 export declare function undo(bufferId: string, undoGroupId: string): UndoResult
+export interface FindQuery {
+  pattern: string
+  /** Flag chars: `i` (case), `m` (multiline), `s` (dotall). */
+  flags?: string
+  /** Inclusive char start of Scope; default 0. */
+  start?: number
+  /** Exclusive char end of Scope; default Buffer len. */
+  end?: number
+  /** Soft cap on matches returned (scan stops early when reached). */
+  maxMatches?: number
+}
+export interface FindCapture {
+  index: number
+  text: string
+}
+export interface FindHitCore {
+  start: number
+  end: number
+  matchText: string
+  /** 0-based line index in the Buffer. */
+  line: number
+  /** 0-based character column within the line. */
+  column: number
+  captures: Array<FindCapture>
+}
+export interface FindProgress {
+  /** `running` | `done` | `cancelled` | `error` */
+  status: string
+  hits: Array<FindHitCore>
+  count: number
+  error?: string
+}
+/**
+ * Start a cancellable Find job on Buffer text (Rust `regex` crate).
+ * Work advances on `find_poll` so `find_cancel` is deterministic between steps.
+ */
+export declare function findStart(bufferId: string, query: FindQuery): string
+/** Advance Find by one batch. Terminal: `done` | `cancelled` | `error`. */
+export declare function findPoll(jobId: string): FindProgress
+/** Request cancellation. Distinct from zero matches (`done` + count 0). */
+export declare function findCancel(jobId: string): void

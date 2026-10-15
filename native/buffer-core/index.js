@@ -310,7 +310,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { createUntitled, createBuffer, setText, bumpRev, openPath, save, len, rev, slice, lineWindow, dropBuffer, applyAccept, undo } = nativeBinding
+const { createUntitled, createBuffer, setText, bumpRev, openPath, save, len, rev, slice, lineWindow, dropBuffer, applyAccept, undo, findStart, findPoll, findCancel } = nativeBinding
 
 module.exports.createUntitled = createUntitled
 module.exports.createBuffer = createBuffer
@@ -325,3 +325,6 @@ module.exports.lineWindow = lineWindow
 module.exports.dropBuffer = dropBuffer
 module.exports.applyAccept = applyAccept
 module.exports.undo = undo
+module.exports.findStart = findStart
+module.exports.findPoll = findPoll
+module.exports.findCancel = findCancel

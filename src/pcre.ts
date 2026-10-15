@@ -1,8 +1,10 @@
 /**
- * PCRE-flavored compile / replace helpers for FindBar.
- * Engine: ECMAScript RegExp (lookaround, named groups, unicode) — the shared
- * dialect FindBar and RegexDraft populate. True libpcre can swap later
- * behind this seam without changing callers.
+ * Shared flag / replacement helpers for FindBar + RegexDraft.
+ *
+ * WUF-100: Find *scanning* runs in Rust (`regex` crate) via buffer-core —
+ * not ECMAScript RegExp. `compilePcre` remains for draft-side validation /
+ * legacy callers only; it is not the Find engine. PCRE lookaround and some
+ * backref dialects are known debt (see nova-docs WUF-100 PCRE-DEBT.md).
  */
 
 export interface PcreFlags {
@@ -21,7 +23,19 @@ export class PcreCompileError extends Error {
   }
 }
 
-/** Compile a PCRE-style pattern string into a global RegExp with match indices. */
+/** Encode flags for the Rust Find engine (`i`/`m`/`s` chars). */
+export function flagsToCoreString(flags: PcreFlags = {}): string {
+  let s = "";
+  if (flags.i) s += "i";
+  if (flags.m) s += "m";
+  if (flags.s) s += "s";
+  return s;
+}
+
+/**
+ * Compile a pattern with ECMAScript RegExp (draft / legacy only).
+ * FindBar scan does **not** use this — see buffer-core findStart.
+ */
 export function compilePcre(pattern: string, flags: PcreFlags = {}): RegExp {
   let flagStr = "gd";
   if (flags.i) flagStr += "i";
@@ -35,13 +49,19 @@ export function compilePcre(pattern: string, flags: PcreFlags = {}): RegExp {
   }
 }
 
+export interface ReplacementMatch {
+  /** Full match text (`$&`). */
+  0: string;
+  [group: number]: string | undefined;
+}
+
 /**
- * Expand a PCRE/JS-style replacement template against one match.
+ * Expand a replacement template against one match.
  * Supports `$n`, `\n`, `$&` / `\&`, `$$` / `\\`.
  */
 export function expandReplacement(
   template: string,
-  match: RegExpMatchArray,
+  match: ReplacementMatch | RegExpMatchArray,
 ): string {
   let out = "";
   for (let i = 0; i < template.length; i++) {
@@ -86,4 +106,16 @@ export function expandReplacement(
     out += ch;
   }
   return out;
+}
+
+/** Build a ReplacementMatch from Find hit groups. */
+export function hitToReplacementMatch(
+  matchText: string,
+  groups: Record<number, string>,
+): ReplacementMatch {
+  const m: ReplacementMatch = { 0: matchText };
+  for (const [k, v] of Object.entries(groups)) {
+    m[Number(k)] = v;
+  }
+  return m;
 }
