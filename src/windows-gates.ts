@@ -216,23 +216,29 @@ async function run100MbGates(
   const midSlice = intent.slice(id, mid, mid + "typed".length);
   const typingGate = evaluateTyping100MbGate(typeMs, midSlice);
 
+  // Scroll nail: plant a mid-line marker, then require the mid window (not top)
+  // to contain it — timing alone / "window non-empty" cannot vacuous-pass.
+  const SCROLL_MARKER = "SCROLL_MARK|";
   const lines = intent.lineCount(id);
-  const start = Math.max(0, Math.floor(lines / 2) - 20);
+  const midLine = Math.max(0, Math.floor(lines / 2));
+  const midProbe = intent.lineWindow(id, midLine, 1);
+  shell.editActiveRange(
+    midProbe.startOffset,
+    midProbe.startOffset,
+    SCROLL_MARKER,
+  );
+  const topWin = intent.lineWindow(id, 0, 40);
   const tScroll = performance.now();
-  const win = intent.lineWindow(id, start, 40);
+  const midWin = intent.lineWindow(id, midLine, 40);
   const scrollMs = performance.now() - tScroll;
-  const scrollOk =
-    scrollMs <= SCROLL_100MB_MAX_MS &&
-    win.text.length > 0 &&
-    win.text.length < FIXTURE_100MB_BYTES / 100;
-  const scrollGate: GateResult = {
-    name: "scroll_100mb",
-    ok: scrollOk,
-    elapsedMs: scrollMs,
-    detail: scrollOk
-      ? `lineWindow mid ${scrollMs.toFixed(1)}ms ≤ ${SCROLL_100MB_MAX_MS}ms; windowChars=${win.text.length}`
-      : `scroll budget failed (elapsed=${scrollMs.toFixed(1)}ms, windowChars=${win.text.length})`,
-  };
+  const scrollGate = evaluateScroll100MbGate({
+    scrollMs,
+    topStartOffset: topWin.startOffset,
+    midStartOffset: midWin.startOffset,
+    topText: topWin.text,
+    midText: midWin.text,
+    marker: SCROLL_MARKER,
+  });
 
   return [openGate, typingGate, scrollGate];
 }
@@ -298,6 +304,54 @@ export function evaluateTyping100MbGate(
     name: "typing_100mb",
     ok,
     elapsedMs: typeMs,
+    detail,
+  };
+}
+
+/**
+ * Scroll gate verdict: mid `lineWindow` must be a different viewport than top
+ * and must contain the planted mid-line marker. Timing + "chars < fixture/100"
+ * alone is vacuous.
+ */
+export function evaluateScroll100MbGate(args: {
+  scrollMs: number;
+  topStartOffset: number;
+  midStartOffset: number;
+  topText: string;
+  midText: string;
+  marker: string;
+}): GateResult {
+  const {
+    scrollMs,
+    topStartOffset,
+    midStartOffset,
+    topText,
+    midText,
+    marker,
+  } = args;
+  const withinBudget = scrollMs <= SCROLL_100MB_MAX_MS;
+  const midHasMarker = midText.includes(marker);
+  const topLacksMarker = !topText.includes(marker);
+  const offsetMoved = midStartOffset > topStartOffset;
+  const ok =
+    withinBudget && midHasMarker && topLacksMarker && offsetMoved;
+
+  let detail: string;
+  if (ok) {
+    detail = `lineWindow mid ${scrollMs.toFixed(1)}ms ≤ ${SCROLL_100MB_MAX_MS}ms; midStart=${midStartOffset}; marker ok`;
+  } else if (!midHasMarker) {
+    detail = `scroll mid window missing marker ${JSON.stringify(marker)} (windowChars=${midText.length})`;
+  } else if (!topLacksMarker) {
+    detail = `scroll top window unexpectedly contains marker — not a mid viewport`;
+  } else if (!offsetMoved) {
+    detail = `scroll mid startOffset ${midStartOffset} not after top ${topStartOffset}`;
+  } else {
+    detail = `scroll budget exceeded (${scrollMs.toFixed(1)}ms > ${SCROLL_100MB_MAX_MS}ms); marker ok`;
+  }
+  return {
+    name: "scroll_100mb",
+    ok,
+    elapsedMs: scrollMs,
     detail,
   };
 }

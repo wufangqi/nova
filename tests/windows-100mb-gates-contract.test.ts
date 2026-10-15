@@ -13,6 +13,7 @@ import {
   TYPING_100MB_MAX_MS,
   assertPackagedNativeLayout,
   ensure100MbFixture,
+  evaluateScroll100MbGate,
   evaluateTyping100MbGate,
   runWindowsGates,
 } from "../src/windows-gates.js";
@@ -68,6 +69,59 @@ describe("WUF-102 typing_100mb is not vacuous", () => {
   });
 });
 
+describe("WUF-102 scroll_100mb is not vacuous", () => {
+  const base = {
+    scrollMs: 1,
+    topStartOffset: 0,
+    midStartOffset: 1_000_000,
+    topText: "LINE-00000000|aaaa\n",
+    midText: "SCROLL_MARK|LINE-00500000|bbbb\n",
+    marker: "SCROLL_MARK|",
+  };
+
+  it("fails when mid window lacks the planted marker", () => {
+    const g = evaluateScroll100MbGate({
+      ...base,
+      midText: "LINE-00500000|bbbb\n",
+    });
+    assert.equal(g.ok, false);
+    assert.match(g.detail, /missing marker/);
+  });
+
+  it("fails when top window also contains the marker (not a mid viewport)", () => {
+    const g = evaluateScroll100MbGate({
+      ...base,
+      topText: "SCROLL_MARK|oops\n",
+    });
+    assert.equal(g.ok, false);
+    assert.match(g.detail, /top window/);
+  });
+
+  it("fails when mid startOffset did not advance past top", () => {
+    const g = evaluateScroll100MbGate({
+      ...base,
+      midStartOffset: 0,
+    });
+    assert.equal(g.ok, false);
+    assert.match(g.detail, /not after top/);
+  });
+
+  it("passes when mid has marker, top lacks it, offset moved, within budget", () => {
+    const g = evaluateScroll100MbGate(base);
+    assert.equal(g.ok, true);
+    assert.match(g.detail, /marker ok/);
+  });
+
+  it("fails when budget is exceeded even if marker is present", () => {
+    const g = evaluateScroll100MbGate({
+      ...base,
+      scrollMs: SCROLL_100MB_MAX_MS + 1,
+    });
+    assert.equal(g.ok, false);
+    assert.match(g.detail, /budget exceeded/);
+  });
+});
+
 describe("WUF-102 gates:windows suite", () => {
   it("passes open/typing/scroll/native alongside legacy floors", async () => {
     const report = await runWindowsGates();
@@ -86,5 +140,7 @@ describe("WUF-102 gates:windows suite", () => {
     }
     const typing = report.gates.find((g) => g.name === "typing_100mb")!;
     assert.match(typing.detail, /"typed"/);
+    const scroll = report.gates.find((g) => g.name === "scroll_100mb")!;
+    assert.match(scroll.detail, /marker ok/);
   });
 });
