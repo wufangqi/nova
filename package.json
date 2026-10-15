@@ -18,6 +18,7 @@
     "notepad:demo": "tsx src/cli/notepad-demo.ts",
     "demo:ten-second": "tsx src/cli/ten-second-demo.ts",
     "demo:visual-ten-second": "tsx src/cli/visual-ten-second-demo.ts",
+    "demo:action-stage": "tsx src/cli/action-stage-demo.ts",
     "gates:windows": "tsx src/cli/windows-gates.ts",
     "ipc:host": "tsx src/ipc/cli-host.ts",
     "desktop:prepare-resources": "node scripts/prepare-tauri-resources.mjs",

@@ -246,3 +246,60 @@ export interface IntentServiceOptions {
    */
   modelGateway?: ModelGatewayLike;
 }
+
+/** Outstanding preview lookup for Action save (WUF-89). */
+export type OutstandingPreviewRecord =
+  | { kind: "patches"; utterance: string }
+  | { kind: "explanation"; utterance: string }
+  | { kind: "regex_draft"; utterance: string; draft: RegexDraft };
+
+/** WUF-89 — Action catalog (save / list / persist). */
+
+export type ActionId = string;
+
+export interface SavedAction {
+  id: ActionId;
+  /** Default = source Intent utterance; renamable (display name only). */
+  displayName: string;
+  /** Compiled copy at save time; immutable after save. */
+  draft: RegexDraft;
+  /** ISO-8601 timestamp. */
+  createdAt: string;
+}
+
+export type SaveActionOk = { ok: true; action: SavedAction };
+export type SaveActionFail = {
+  ok: false;
+  reason: "not_regex_draft" | "cap_exceeded" | "stale_preview";
+};
+export type SaveActionResult = SaveActionOk | SaveActionFail;
+
+/** WUF-90 — rename / delete catalog mutations. */
+export type MutateActionOk = { ok: true };
+export type MutateActionFail = { ok: false; reason: "not_found" };
+export type MutateActionResult = MutateActionOk | MutateActionFail;
+
+/** WUF-91 — Action preview_run on Selection → Patch preview. */
+export type PreviewRunOk = {
+  ok: true;
+  previewId: PreviewId;
+  patches: Patch[];
+  cost: Cost;
+  /** Always absent — Action runs never create Outbound. */
+  outbound?: undefined;
+};
+
+export type PreviewRunFail = {
+  ok: false;
+  reason:
+    | "empty_selection"
+    | "zero_matches"
+    | "no_replacement"
+    | "not_found"
+    | "invalid_selection"
+    | "invalid_pattern"
+    | "no_pattern";
+  guidance: string;
+};
+
+export type PreviewRunResult = PreviewRunOk | PreviewRunFail;

@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  ActionPanel,
+  type ActionPanelPort,
+  type ActionView,
+} from "./action-panel.ts";
+import {
+  canOfferSaveAsAction,
+  type PreviewKindForSave,
+} from "./action-ui.ts";
+import {
   chooseSaveAction,
   pathInputValueForActive,
 } from "./path-toolbar.ts";
@@ -182,9 +191,105 @@ type ResolveExplanationAnchorResult = {
   tabs: TabInfo[];
 };
 
+type SavedActionRow = {
+  id: string;
+  displayName: string;
+  draft: { pattern: string; replacement?: string; flags?: string };
+  createdAt: string;
+};
+
+type SaveFromRegexDraftResult =
+  | { ok: true; action: SavedActionRow }
+  | {
+      ok: false;
+      reason: "not_regex_draft" | "cap_exceeded" | "stale_preview";
+    };
+
+type ListActionsResult = { actions: SavedActionRow[] };
+
+type MutateActionResult =
+  | { ok: true }
+  | { ok: false; reason: "not_found" };
+
+type PreviewRunIpcResult = {
+  run:
+    | {
+        ok: true;
+        previewId: string;
+        patches: Patch[];
+        cost: Cost;
+      }
+    | {
+        ok: false;
+        reason: string;
+        guidance: string;
+      };
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
+};
+
+function toActionView(action: SavedActionRow): ActionView {
+  return {
+    id: action.id,
+    displayName: action.displayName,
+    pattern: action.draft.pattern,
+    replacement: action.draft.replacement,
+    flags: action.draft.flags,
+    createdAt: action.createdAt,
+  };
+}
+
+/** Tauri invoke port — thin wrap; Action semantics stay in the IPC host. */
+const actionPort: ActionPanelPort = {
+  async listActions() {
+    const result = await invoke<ListActionsResult>("list_actions_cmd");
+    return result.actions.map(toActionView);
+  },
+  async saveFromRegexDraft({ previewId, displayName }) {
+    const result = await invoke<SaveFromRegexDraftResult>(
+      "save_from_regex_draft_cmd",
+      {
+        previewId,
+        displayName: displayName ?? null,
+      },
+    );
+    return result.ok
+      ? { ok: true, action: toActionView(result.action) }
+      : { ok: false, reason: result.reason };
+  },
+  async renameAction({ id, displayName }) {
+    return invoke<MutateActionResult>("rename_action_cmd", {
+      id,
+      displayName,
+    });
+  },
+  async deleteAction({ id }) {
+    return invoke<MutateActionResult>("delete_action_cmd", { id });
+  },
+  async previewRun({ actionId, selection }) {
+    const result = await invoke<PreviewRunIpcResult>("preview_run_cmd", {
+      params: { actionId, selection },
+    });
+    const run = result.run;
+    return run.ok
+      ? {
+          ok: true,
+          run: {
+            previewId: run.previewId,
+            patches: run.patches,
+            cost: run.cost,
+          },
+        }
+      : { ok: false, reason: run.reason, guidance: run.guidance };
+  },
+};
+
+const actionPanel = new ActionPanel(actionPort);
+
 let applyingRemote = false;
 let activeId: string | null = null;
 let pendingPreviewId: string | null = null;
+let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
 function el<T extends HTMLElement>(id: string): T {
@@ -209,6 +314,10 @@ function setIntentActions(opts: {
   );
 }
 
+function setSaveAsActionEnabled(enabled: boolean) {
+  el<HTMLButtonElement>("save-as-action").disabled = !enabled;
+}
+
 function clearExplanationPanel() {
   const panel = el<HTMLElement>("explanation-panel");
   panel.hidden = true;
@@ -224,6 +333,7 @@ function clearSuggestionsBar() {
 
 function clearPreviewPanel() {
   pendingPreviewId = null;
+  pendingPreviewKind = null;
   pendingPatches = null;
   el<HTMLElement>("intent-meta").hidden = true;
   el<HTMLElement>("intent-meta").textContent = "";
@@ -233,6 +343,13 @@ function clearPreviewPanel() {
   el<HTMLElement>("patch-diff").textContent = "";
   clearExplanationPanel();
   setIntentActions({ accept: false, reject: false });
+  setSaveAsActionEnabled(false);
+}
+
+/** Current editor range (caret counts as empty Selection for Action run). */
+function editorRange(): { start: number; end: number } {
+  const editor = el<HTMLTextAreaElement>("editor");
+  return { start: editor.selectionStart, end: editor.selectionEnd };
 }
 
 function renderTabs(tabs: TabInfo[]) {
@@ -637,6 +754,7 @@ async function applyPreviewResult(
 
   showCostAndOutbound(preview);
   pendingPreviewId = preview.previewId;
+  pendingPreviewKind = preview.kind;
 
   const diffEl = el<HTMLElement>("patch-diff");
   if (preview.kind === "patches") {
@@ -644,6 +762,7 @@ async function applyPreviewResult(
     diffEl.hidden = false;
     diffEl.textContent = formatPatchDiff(buffer.text, preview.patches);
     setIntentActions({ accept: true, reject: true });
+    setSaveAsActionEnabled(false);
     setStatus(`Preview ready (${scopeHint}) — Accept or Reject`);
     return;
   }
@@ -651,6 +770,7 @@ async function applyPreviewResult(
   if (preview.kind === "explanation") {
     renderExplanation(preview.explanation);
     setIntentActions({ accept: false, reject: true });
+    setSaveAsActionEnabled(false);
     setStatus("Explanation preview (read-only — click anchor to jump; Reject to dismiss)");
     return;
   }
@@ -663,9 +783,156 @@ async function applyPreviewResult(
   diffEl.hidden = false;
   diffEl.textContent = `RegexDraft filled FindBar: /${draft.pattern}/${draft.flags ?? ""}${
     draft.replacement !== undefined ? ` → ${JSON.stringify(draft.replacement)}` : ""
-  }\nBuffer unchanged — use Find / Preview replace / Replace Accept.`;
+  }\nBuffer unchanged — use Find / Preview replace / Replace Accept, or Save as Action.`;
   setIntentActions({ accept: false, reject: true });
-  setStatus("RegexDraft → FindBar (no Buffer write; explicit replace to Accept)");
+  setSaveAsActionEnabled(canOfferSaveAsAction("regex_draft"));
+  setStatus(
+    "RegexDraft → FindBar (no Buffer write) — Save as Action to pin for reuse",
+  );
+}
+
+function renderActionList(actions: ActionView[]) {
+  const list = el<HTMLElement>("action-list");
+  list.replaceChildren();
+  if (actions.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "action-empty";
+    empty.textContent =
+      "No Actions yet — Save as Action from a RegexDraft preview";
+    list.appendChild(empty);
+    return;
+  }
+  for (const action of actions) {
+    const row = document.createElement("li");
+    row.dataset.actionId = action.id;
+
+    const name = document.createElement("span");
+    name.className = "action-name";
+    name.textContent = action.displayName;
+    name.title = `/${action.pattern}/${action.flags ?? ""}`;
+    row.appendChild(name);
+
+    const runBtn = document.createElement("button");
+    runBtn.type = "button";
+    runBtn.textContent = "Run";
+    runBtn.title = "Preview-run on current Selection";
+    runBtn.addEventListener("click", () => {
+      void previewRunAction(action);
+    });
+    row.appendChild(runBtn);
+
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", () => {
+      void renameListedAction(action);
+    });
+    row.appendChild(renameBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => {
+      void deleteListedAction(action);
+    });
+    row.appendChild(deleteBtn);
+
+    list.appendChild(row);
+  }
+}
+
+async function refreshActionList() {
+  try {
+    const actions = await actionPanel.refresh();
+    renderActionList(actions);
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function saveAsAction() {
+  try {
+    // Only offer save when UI shows a RegexDraft; otherwise pass null so
+    // ActionPanel returns plain-language refusal (no compiled-regex editor).
+    const idForSave = canOfferSaveAsAction(pendingPreviewKind)
+      ? pendingPreviewId
+      : null;
+    const result = await actionPanel.save(idForSave);
+    if (result.ok) {
+      renderActionList(actionPanel.list());
+    }
+    setStatus(result.message);
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function previewRunAction(action: ActionView) {
+  if (!activeId) {
+    setStatus("No active Buffer for Action");
+    return;
+  }
+  try {
+    const range = editorRange();
+    const selection =
+      range.start === range.end ? null : range;
+    const result = await actionPanel.run(action.id, selection);
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    applyState(state.buffer, state.tabs);
+
+    clearPreviewPanel();
+    pendingPreviewId = result.run.previewId;
+    pendingPreviewKind = "patches";
+    pendingPatches = result.run.patches as Patch[];
+    const meta = el<HTMLElement>("intent-meta");
+    meta.hidden = false;
+    meta.textContent = `Cost · ~${result.run.cost.latencyMsEstimate}ms · ~${result.run.cost.tokensEstimate} tokens · outbound=no (Action)`;
+    el<HTMLElement>("outbound-banner").hidden = true;
+    const diffEl = el<HTMLElement>("patch-diff");
+    diffEl.hidden = false;
+    diffEl.textContent = formatPatchDiff(
+      state.buffer?.text ?? "",
+      pendingPatches,
+    );
+    setIntentActions({ accept: true, reject: true });
+    setSaveAsActionEnabled(false);
+    setStatus(result.message);
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function renameListedAction(action: ActionView) {
+  const next = window.prompt("Rename Action", action.displayName);
+  if (next === null) return;
+  try {
+    const result = await actionPanel.rename(action.id, next);
+    if (result.ok) {
+      renderActionList(actionPanel.list());
+    }
+    setStatus(result.message);
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function deleteListedAction(action: ActionView) {
+  const ok = window.confirm(`Delete Action “${action.displayName}”?`);
+  if (!ok) return;
+  try {
+    const result = await actionPanel.remove(action.id);
+    if (result.ok) {
+      renderActionList(actionPanel.list());
+    }
+    setStatus(result.message);
+  } catch (err) {
+    setStatus(String(err));
+  }
 }
 
 async function runPreview() {
@@ -978,6 +1245,12 @@ window.addEventListener("DOMContentLoaded", () => {
   el<HTMLButtonElement>("intent-undo").addEventListener("click", () => {
     void undoLast();
   });
+  el<HTMLButtonElement>("save-as-action").addEventListener("click", () => {
+    void saveAsAction();
+  });
+  el<HTMLButtonElement>("action-refresh").addEventListener("click", () => {
+    void refreshActionList().then(() => setStatus("Action 列表已刷新"));
+  });
   el<HTMLInputElement>("cloud-enabled").addEventListener("change", () => {
     void onCloudToggle();
   });
@@ -1027,6 +1300,7 @@ window.addEventListener("DOMContentLoaded", () => {
       el<HTMLInputElement>("suggestions-enabled").checked = false;
     }
     await evoke();
+    await refreshActionList();
     try {
       const accel = await invoke<string>("get_global_hotkey_cmd");
       setStatus(`Ready — global hotkey ${accel}`);

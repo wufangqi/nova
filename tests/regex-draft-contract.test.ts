@@ -39,6 +39,22 @@ describe("NL → RegexDraft fills FindBar", () => {
     assert.equal(hits.hits[0]!.groups[1], "1");
   });
 
+  it("sed-style regex s/pat/repl/flags yields a RegexDraft with replacement", () => {
+    const svc = new IntentService({ modelAvailable: true });
+    const buf = svc.createBuffer("red fox");
+
+    const intent = svc.parse({
+      bufferId: buf.id,
+      utterance: "regex s/red/blue/g",
+    });
+    const preview = svc.preview(intent);
+    assert.equal(preview.kind, "regex_draft");
+    if (preview.kind !== "regex_draft") return;
+    assert.equal(preview.draft.pattern, "red");
+    assert.equal(preview.draft.replacement, "blue");
+    assert.ok(preview.draft.flags?.includes("g"));
+  });
+
   it("NL phrases like 'write a regex for digits' produce a usable draft", () => {
     const svc = new IntentService({ modelAvailable: true });
     const buf = svc.createBuffer("x12 y34");

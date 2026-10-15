@@ -446,6 +446,43 @@ pub fn get_draft(bridge: &SharedBridge) -> Result<Value, String> {
     call_empty(bridge, "get_draft")
 }
 
+/// WUF-92 — Action facade pass-through (no host-owned Action semantics).
+pub fn save_from_regex_draft(
+    bridge: &SharedBridge,
+    preview_id: String,
+    display_name: Option<String>,
+) -> Result<Value, String> {
+    let mut params = json!({ "previewId": preview_id });
+    if let Some(name) = display_name {
+        params["displayName"] = json!(name);
+    }
+    call_params(bridge, "save_from_regex_draft", params)
+}
+
+pub fn list_actions(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "list_actions")
+}
+
+pub fn rename_action(
+    bridge: &SharedBridge,
+    id: String,
+    display_name: String,
+) -> Result<Value, String> {
+    call_params(
+        bridge,
+        "rename_action",
+        json!({ "id": id, "displayName": display_name }),
+    )
+}
+
+pub fn delete_action(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    call_params(bridge, "delete_action", json!({ "id": id }))
+}
+
+pub fn preview_run(bridge: &SharedBridge, params: Value) -> Result<Value, String> {
+    call_params(bridge, "preview_run", params)
+}
+
 fn call_empty(bridge: &SharedBridge, method: &str) -> Result<Value, String> {
     let mut guard = bridge
         .lock()

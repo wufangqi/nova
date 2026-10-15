@@ -1,4 +1,11 @@
 export { IntentService } from "./intent-service.js";
+export {
+  ActionService,
+  MemoryActionStore,
+  FileActionStore,
+  ACTION_SOFT_CAP,
+} from "./action-service.js";
+export type { ActionStore, ActionServiceOptions } from "./action-service.js";
 export { IntentIpcHost } from "./ipc/host.js";
 export type {
   IpcMethod,
@@ -45,6 +52,11 @@ export type {
   TenSecondDemoOptions,
   TenSecondDemoResult,
 } from "./ten-second-demo.js";
+export { runActionStageDemo } from "./action-stage-demo.js";
+export type {
+  ActionStageDemoOptions,
+  ActionStageDemoResult,
+} from "./action-stage-demo.js";
 export { runVisualTenSecondDemo } from "./visual-ten-second-demo.js";
 export type {
   VisualTenSecondDemoOptions,

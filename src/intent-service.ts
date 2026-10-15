@@ -26,11 +26,13 @@ import type {
   IntentServiceOptions,
   MainHistoryEntry,
   Outbound,
+  OutstandingPreviewRecord,
   ParseInput,
   Patch,
   PreviewId,
   PreviewResult,
   ProvenanceAuditEntry,
+  RegexDraft,
   ResolvedScope,
   TextEdit,
   UndoGroupId,
@@ -213,13 +215,14 @@ function scopeSlice(text: string, scope: ResolvedScope): string {
  * WUF-75: transform Intents via model gateway + deterministic validator.
  * WUF-76: Explanation previews + safe anchor resolve (no Buffer mutation).
  * WUF-77: NL → RegexDraft (FindBar fill only; replace is an explicit later step).
+ * WUF-89: outstanding preview records for Action save eligibility.
  */
 export class IntentService {
   private buffers = new Map<BufferId, BufferState>();
   private undoGroups = new Map<UndoGroupId, UndoGroupRecord>();
   private mainHistory = new Map<BufferId, MainHistoryEntry[]>();
   private audit = new Map<BufferId, ProvenanceAuditEntry[]>();
-  private outstandingPreviews = new Map<PreviewId, true>();
+  private outstandingPreviews = new Map<PreviewId, OutstandingPreviewRecord>();
   private readonly modelAvailable: boolean;
   private cloudEnabled: boolean;
   private readonly visibleSampleChars: number;
@@ -333,7 +336,6 @@ export class IntentService {
 
     const scoped = scopeSlice(buf.text, intent.scope);
     const previewId = randomUUID();
-    this.outstandingPreviews.set(previewId, true);
 
     // Cloud path: noticeability even when a local gateway is injected for tests.
     const outbound: Outbound[] | undefined = this.cloudEnabled
@@ -354,6 +356,10 @@ export class IntentService {
 
     if (isExplainUtterance(intent.utterance)) {
       // Read-only Explanation — never mutates Buffer; Accept is not used.
+      this.outstandingPreviews.set(previewId, {
+        kind: "explanation",
+        utterance: intent.utterance,
+      });
       return {
         kind: "explanation",
         previewId,
@@ -371,10 +377,16 @@ export class IntentService {
 
     if (isRegexDraftUtterance(intent.utterance)) {
       // RegexDraft only populates FindBar — never Accepts into Buffer text.
+      const draft: RegexDraft = buildRegexDraft(intent.utterance);
+      this.outstandingPreviews.set(previewId, {
+        kind: "regex_draft",
+        utterance: intent.utterance,
+        draft: { ...draft },
+      });
       return {
         kind: "regex_draft",
         previewId,
-        draft: buildRegexDraft(intent.utterance),
+        draft,
         cost: {
           ...cost,
           latencyMsEstimate: this.cloudEnabled ? 280 : 15,
@@ -400,7 +412,6 @@ export class IntentService {
       buf.text.length,
     );
     if (!validated.ok) {
-      this.outstandingPreviews.delete(previewId);
       return {
         kind: "error",
         reason: "validation_failed",
@@ -432,6 +443,10 @@ export class IntentService {
       intentId: intent.id,
     };
 
+    this.outstandingPreviews.set(previewId, {
+      kind: "patches",
+      utterance: intent.utterance,
+    });
     return {
       kind: "patches",
       previewId,
@@ -444,6 +459,29 @@ export class IntentService {
   /** Discard an outstanding preview; Buffer is never mutated. */
   reject(previewId: PreviewId): void {
     this.outstandingPreviews.delete(previewId);
+  }
+
+  /**
+   * Lookup for Action save eligibility (WUF-89).
+   * Absent after reject or unknown id ⇒ caller treats as stale_preview.
+   */
+  getOutstandingPreview(
+    previewId: PreviewId,
+  ): OutstandingPreviewRecord | undefined {
+    return this.outstandingPreviews.get(previewId);
+  }
+
+  /**
+   * Register a hand-built patches preview (Action preview_run).
+   * Enables IntentService.reject(previewId); Accept still uses accept(patches).
+   */
+  registerPatchesPreview(utterance = ""): PreviewId {
+    const previewId = randomUUID();
+    this.outstandingPreviews.set(previewId, {
+      kind: "patches",
+      utterance,
+    });
+    return previewId;
   }
 
   /**
