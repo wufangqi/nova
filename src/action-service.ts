@@ -1,17 +1,21 @@
 /**
- * Action facade — save / list / persist (WUF-89); rename / delete / soft cap (WUF-90).
- * preview_run lands in a later Work ticket.
+ * Action facade — save / list / persist (WUF-89), rename / delete / soft cap (WUF-90),
+ * preview_run (WUF-91). IPC lands in a later Work ticket.
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { FindBar } from "./find-bar.js";
 import type { IntentService } from "./intent-service.js";
 import type {
   ActionId,
+  BufferId,
   MutateActionResult,
   PreviewId,
+  PreviewRunResult,
   SaveActionResult,
   SavedAction,
+  Selection,
 } from "./types.js";
 
 /** Soft catalog size (~50). Enforced on save. */
@@ -154,6 +158,121 @@ export class ActionService {
     this.actions.splice(index, 1);
     this.store.saveAll(this.actions);
     return { ok: true };
+  }
+
+  /**
+   * Deterministic re-run on a non-empty Selection → Patch preview.
+   * Uses the same PCRE surface as FindBar; never Outbound / never model.
+   * Buffer writes only via IntentService.accept of the returned patches.
+   */
+  previewRun(input: {
+    actionId: ActionId;
+    bufferId: BufferId;
+    selection: Selection;
+  }): PreviewRunResult {
+    const { selection } = input;
+    if (selection.start === selection.end) {
+      return {
+        ok: false,
+        reason: "empty_selection",
+        guidance:
+          "Selection is empty — highlight a non-empty range before running an Action (never applies to the whole Buffer silently).",
+      };
+    }
+
+    const action = this.actions.find((a) => a.id === input.actionId);
+    if (!action) {
+      return {
+        ok: false,
+        reason: "not_found",
+        guidance: "Action not found — it may have been deleted.",
+      };
+    }
+
+    // Find-only definitions cannot rewrite Buffer text.
+    if (action.draft.replacement === undefined) {
+      return {
+        ok: false,
+        reason: "no_replacement",
+        guidance:
+          "This Action has a pattern but no replacement — find-only; text Accept is not offered.",
+      };
+    }
+
+    const buf = this.intent.getBuffer(input.bufferId);
+    if (
+      selection.start < 0 ||
+      selection.end < selection.start ||
+      selection.end > buf.text.length
+    ) {
+      return {
+        ok: false,
+        reason: "invalid_selection",
+        guidance: "Selection is out of range for this Buffer.",
+      };
+    }
+
+    const bar = new FindBar(this.intent);
+    bar.applyDraft(action.draft);
+    const replace = bar.previewReplace({
+      bufferId: input.bufferId,
+      scope: {
+        kind: "range",
+        start: selection.start,
+        end: selection.end,
+      },
+    });
+
+    if (!replace.ok) {
+      if (replace.reason === "no_matches") {
+        return {
+          ok: false,
+          reason: "zero_matches",
+          guidance:
+            "Zero matches in the Selection — nothing to Accept; try a different range or Action.",
+        };
+      }
+      if (replace.reason === "invalid_pattern") {
+        return {
+          ok: false,
+          reason: "invalid_pattern",
+          guidance: "Action pattern failed to compile (PCRE).",
+        };
+      }
+      if (replace.reason === "no_pattern") {
+        return {
+          ok: false,
+          reason: "no_pattern",
+          guidance: "Action has an empty pattern.",
+        };
+      }
+      return {
+        ok: false,
+        reason: "invalid_selection",
+        guidance: "Selection is invalid for this Buffer.",
+      };
+    }
+
+    const patches = replace.patches.map((p) => ({
+      ...p,
+      edits: p.edits.map((e) => ({ ...e })),
+      provenance: {
+        source: "action" as const,
+        label: action.displayName,
+      },
+    }));
+
+    const previewId = this.intent.registerPatchesPreview(action.displayName);
+    return {
+      ok: true,
+      previewId,
+      patches,
+      cost: {
+        latencyMsEstimate: 5,
+        tokensEstimate: 0,
+        hasOutbound: false,
+      },
+    };
   }
 
   private sortRecentFirst(): void {
