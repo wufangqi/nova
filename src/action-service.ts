@@ -1,6 +1,6 @@
 /**
  * Action facade — save / list / persist (WUF-89), rename / delete / soft cap (WUF-90),
- * preview_run (WUF-91). IPC lands in a later Work ticket.
+ * preview_run (WUF-91). IPC thin wrap is IntentIpcHost (WUF-92).
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

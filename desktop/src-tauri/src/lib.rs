@@ -1,10 +1,11 @@
 mod intent_bridge;
 
 use intent_bridge::{
-    accept, activate_tab, apply_draft, confirm_close, create_buffer, edit_active, evoke, find,
-    get_buffer, get_draft, get_shell_state, get_suggestions_enabled, list_tabs, open_path,
-    preview_intent, preview_replace, reject_preview, replace_accept, request_close,
-    resolve_explanation_anchor, save_active, save_active_as, select_suggestion, set_cloud_enabled,
+    accept, activate_tab, apply_draft, confirm_close, create_buffer, delete_action, edit_active,
+    evoke, find, get_buffer, get_draft, get_shell_state, get_suggestions_enabled, list_actions,
+    list_tabs, open_path, preview_intent, preview_replace, preview_run, reject_preview,
+    rename_action, replace_accept, request_close, resolve_explanation_anchor, save_active,
+    save_active_as, save_from_regex_draft, select_suggestion, set_cloud_enabled,
     set_suggestions_enabled, suggestions_for_paste, undo, IntentBridge, SharedBridge,
 };
 use serde_json::Value;
@@ -225,6 +226,45 @@ fn get_draft_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String
     get_draft(&bridge)
 }
 
+#[tauri::command]
+fn save_from_regex_draft_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    preview_id: String,
+    display_name: Option<String>,
+) -> Result<Value, String> {
+    save_from_regex_draft(&bridge, preview_id, display_name)
+}
+
+#[tauri::command]
+fn list_actions_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String> {
+    list_actions(&bridge)
+}
+
+#[tauri::command]
+fn rename_action_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+    display_name: String,
+) -> Result<Value, String> {
+    rename_action(&bridge, id, display_name)
+}
+
+#[tauri::command]
+fn delete_action_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    delete_action(&bridge, id)
+}
+
+#[tauri::command]
+fn preview_run_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    params: Value,
+) -> Result<Value, String> {
+    preview_run(&bridge, params)
+}
+
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -316,7 +356,12 @@ pub fn run() {
             preview_replace_cmd,
             replace_accept_cmd,
             apply_draft_cmd,
-            get_draft_cmd
+            get_draft_cmd,
+            save_from_regex_draft_cmd,
+            list_actions_cmd,
+            rename_action_cmd,
+            delete_action_cmd,
+            preview_run_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

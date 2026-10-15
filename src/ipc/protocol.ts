@@ -1,18 +1,24 @@
 /**
- * WUF-81/82/84/85/86 — Tauri IPC request/response shapes.
- * Thin facade over IntentService + EditorShell + FindBar; no alternate Accept path.
+ * WUF-81/82/84/85/86/92 — Tauri IPC request/response shapes.
+ * Thin facade over IntentService + EditorShell + FindBar + ActionService;
+ * no alternate Accept path.
  */
 import type {
   AcceptResult,
+  ActionId,
   AnchorResolveResult,
   BufferCreateOptions,
   BufferSnapshot,
   ExplanationAnchor,
   Intent,
+  MutateActionResult,
   Patch,
   PreviewId,
   PreviewResult,
+  PreviewRunResult,
   RegexDraft,
+  SaveActionResult,
+  SavedAction,
   Selection,
   UndoGroupId,
   VisibleWindow,
@@ -53,7 +59,12 @@ export type IpcMethod =
   | "preview_replace"
   | "replace_accept"
   | "apply_draft"
-  | "get_draft";
+  | "get_draft"
+  | "save_from_regex_draft"
+  | "list_actions"
+  | "rename_action"
+  | "delete_action"
+  | "preview_run";
 
 export type CreateBufferRequest = {
   method: "create_buffer";
@@ -215,6 +226,40 @@ export type GetDraftRequest = {
   params: Record<string, never> | {};
 };
 
+/** WUF-92 — Action facade thin wrap (no Buffer write). */
+export type SaveFromRegexDraftRequest = {
+  method: "save_from_regex_draft";
+  params: {
+    previewId: PreviewId;
+    displayName?: string;
+  };
+};
+
+export type ListActionsRequest = {
+  method: "list_actions";
+  params: Record<string, never> | {};
+};
+
+export type RenameActionRequest = {
+  method: "rename_action";
+  params: { id: ActionId; displayName: string };
+};
+
+export type DeleteActionRequest = {
+  method: "delete_action";
+  params: { id: ActionId };
+};
+
+export type PreviewRunRequest = {
+  method: "preview_run";
+  params: {
+    actionId: ActionId;
+    /** Defaults to the shell's active Buffer. */
+    bufferId?: string;
+    selection: Selection;
+  };
+};
+
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
@@ -242,7 +287,12 @@ export type IpcRequest =
   | PreviewReplaceRequest
   | ReplaceAcceptRequest
   | ApplyDraftRequest
-  | GetDraftRequest;
+  | GetDraftRequest
+  | SaveFromRegexDraftRequest
+  | ListActionsRequest
+  | RenameActionRequest
+  | DeleteActionRequest
+  | PreviewRunRequest;
 
 export type IpcOk<T> = { ok: true; result: T };
 export type IpcErr = { ok: false; error: string };
@@ -344,4 +394,19 @@ export type ApplyDraftIpcResult = {
 
 export type GetDraftIpcResult = {
   draft: RegexDraft;
+};
+
+export type SaveFromRegexDraftIpcResult = SaveActionResult;
+
+export type ListActionsIpcResult = {
+  actions: SavedAction[];
+};
+
+export type RenameActionIpcResult = MutateActionResult;
+export type DeleteActionIpcResult = MutateActionResult;
+
+export type PreviewRunIpcResult = {
+  run: PreviewRunResult;
+  buffer: BufferSnapshot;
+  tabs: TabInfo[];
 };
