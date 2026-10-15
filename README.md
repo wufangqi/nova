@@ -2,18 +2,18 @@
 
 轻量 AI 记事本的**核心与桌面壳**（内部代号，非正式品牌名）。
 
-以 Notepad++ 式冷启动为底：打开即用、无项目 / 无索引；AI 只提案 **Patch**，人 **Accept** 落笔。域语言与 ADR 在姊妹仓 [nova-docs](https://github.com/wufangqi/nova-docs)。
+以 Notepad++ 式冷启动为底：打开即用、无项目 / 无索引；AI 只提案 **Patch**，人 **Accept** 落笔。
 
 ## 当前状态
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| M2 合同 | `IntentService` / Buffer / FindBar / 十秒 Demo（CLI + 测试） | 已合入 `main`（WUF-69） |
-| 桌面壳 | Tauri UI + IPC 挂接同一套核心 | `feature/wuf-80-tauri-shell`（WUF-80） |
+| 核心合同 | `IntentService` / Buffer / FindBar / 十秒 Demo（CLI + 测试） | 已合入 `main` |
+| 桌面壳 | Tauri UI + IPC 挂接同一套核心 | 已合入 `main` |
 | 性能内核 | Rust Rope / mmap 等 | 未开 |
 | 产品名 / 变现 | — | 挂起 |
 
-验证目标平台：**Windows**（ADR-0004）。Linux / macOS 尽力而为。
+验证目标平台：**Windows**。Linux / macOS 尽力而为。
 
 ## Windows 安装包下载
 
@@ -26,17 +26,9 @@
 | `.exe`（NSIS） | 一般用户推荐 |
 | `.msi` | 适合静默 / 企业部署 |
 
-需要 Windows 10+；缺 WebView2 时安装器会引导补齐。安装包内嵌便携 Node，用于 Intent IPC（无需本机预装 Node）。离线 AI 仍需另备本地模型（可选，ADR-0003）。
+需要 Windows 10+；缺 WebView2 时安装器会引导补齐。安装包内嵌便携 Node，用于 Intent IPC（无需本机预装 Node）。离线 AI 仍需另备本地模型（可选）。
 
 发布方式：推送 tag `v*`（如 `v0.1.0`），或在 Actions 里手动跑 **Windows Release** 工作流。
-
-## 仓库怎么分工
-
-| 路径 | 职责 |
-| --- | --- |
-| 本仓 `nova` | TypeScript 核心、合同测试、`desktop/` Tauri 壳 |
-| `nova-docs` | CONTEXT / ADR、Multica 产物（`.aidlc/issues/…`） |
-| 工作区 `ai-native-editor-可执行方案.md` | 产品可执行方案（长文）；与代码冲突时以 CONTEXT + ADR + Multica SPEC 为准 |
 
 ## 快速开始
 
@@ -96,7 +88,7 @@ IntentService · EditorShell · FindBar · …
 ```
 
 - **真身**：Buffer（逻辑文本 + Encoding/EOL）；无 Workspace / Project。
-- **离线**：编辑器可无模型运行；离线 AI / 完整 Demo 需评测机预置本地模型（ADR-0003）。默认安装包**不**强制装箱大模型。
+- **离线**：编辑器可无模型运行；离线 AI / 完整 Demo 需评测机预置本地模型。默认安装包**不**强制装箱大模型。
 
 ## 目录
 
@@ -106,10 +98,3 @@ tests/         合同测试
 desktop/       Tauri 前端 + src-tauri
 scripts/       辅助安装（如 Linux 桌面）
 ```
-
-## 文档入口
-
-- 域词汇：`nova-docs` → `.aidlc/domain/CONTEXT.md`
-- 决策：`nova-docs` → `.aidlc/domain/docs/adr/`
-- M2 合同 Stage：`.aidlc/issues/wuf-69-intent-service-m2/`
-- 桌面壳 Stage：`.aidlc/issues/wuf-80-tauri-shell/`
