@@ -37,13 +37,17 @@ function ask(request: unknown): Promise<unknown> {
 }
 
 describe("IPC stdio host smoke", () => {
-  it("create_buffer then accept over stdio", async () => {
+  it("create_buffer over stdio omits full text by default", async () => {
     const created = (await ask({
       method: "create_buffer",
       params: { text: "hello world" },
-    })) as { ok: true; result: { id: string; revision: number; text: string } };
+    })) as {
+      ok: true;
+      result: { id: string; revision: number; text?: string };
+    };
     assert.equal(created.ok, true);
-    assert.equal(created.result.text, "hello world");
+    assert.equal(created.result.text, undefined);
+    assert.equal(created.result.revision, 0);
 
     // Second request needs a long-lived process — use IntentIpcHost unit tests
     // for multi-call; this smoke only proves the stdio entrypoint answers.

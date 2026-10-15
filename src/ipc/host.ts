@@ -4,7 +4,9 @@
  * All Accept writes go through IntentService.accept only (FindBar.replaceAccept included).
  * WUF-86: Explanation anchor resolve + ClipboardSuggestions (default off).
  * WUF-92: Action methods are pure forwards to ActionService (no host-owned semantics).
+ * WUF-98: slice / line_window / buffer_len / buffer_rev; snapshots omit text by default.
  */
+import type { BufferSnapshot } from "../types.js";
 import {
   ActionService,
   MemoryActionStore,
@@ -21,6 +23,10 @@ import type {
   ActivateTabRequest,
   ApplyDraftIpcResult,
   ApplyDraftRequest,
+  BufferLenRequest,
+  BufferLenResult,
+  BufferRevRequest,
+  BufferRevResult,
   ConfirmCloseRequest,
   CreateBufferRequest,
   CreateBufferResult,
@@ -39,6 +45,8 @@ import type {
   GetSuggestionsEnabledRequest,
   IpcRequest,
   IpcResponse,
+  LineWindowRequest,
+  LineWindowResult,
   ListActionsIpcResult,
   ListActionsRequest,
   ListTabsRequest,
@@ -71,12 +79,29 @@ import type {
   ShellCloseResult,
   ShellStateResult,
   ShellTabsResult,
+  SliceRequest,
+  SliceResult,
   SuggestionsEnabledResult,
   SuggestionsForPasteRequest,
   SuggestionsForPasteResult,
   UndoIpcResult,
   UndoRequest,
 } from "./protocol.js";
+
+/** Strip full text from snapshots unless the caller opted in. */
+export function toIpcSnapshot(
+  snap: BufferSnapshot,
+  includeText = false,
+): BufferSnapshot {
+  if (includeText) return snap;
+  return {
+    id: snap.id,
+    revision: snap.revision,
+    encoding: snap.encoding,
+    eol: snap.eol,
+    bom: snap.bom,
+  };
+}
 
 export interface IntentIpcHostOptions extends IntentServiceOptions {
   /** Injectable Action persistence (tests: MemoryActionStore / temp FileActionStore). */
@@ -106,6 +131,10 @@ export class IntentIpcHost {
 
   handle(request: CreateBufferRequest): Promise<IpcResponse<CreateBufferResult>>;
   handle(request: GetBufferRequest): Promise<IpcResponse<GetBufferResult>>;
+  handle(request: SliceRequest): Promise<IpcResponse<SliceResult>>;
+  handle(request: LineWindowRequest): Promise<IpcResponse<LineWindowResult>>;
+  handle(request: BufferLenRequest): Promise<IpcResponse<BufferLenResult>>;
+  handle(request: BufferRevRequest): Promise<IpcResponse<BufferRevResult>>;
   handle(request: AcceptRequest): Promise<IpcResponse<AcceptIpcResult>>;
   handle(request: EvokeRequest): Promise<IpcResponse<ShellBufferResult>>;
   handle(request: ListTabsRequest): Promise<IpcResponse<ShellTabsResult>>;
@@ -157,20 +186,63 @@ export class IntentIpcHost {
     try {
       switch (request.method) {
         case "create_buffer": {
-          const { text = "", ...options } = request.params;
-          return { ok: true, result: this.service.createBuffer(text, options) };
+          const { text = "", includeText = false, ...options } = request.params;
+          const snap = this.service.createBuffer(text, options);
+          return {
+            ok: true,
+            result: toIpcSnapshot(snap, includeText),
+          };
         }
         case "get_buffer":
           return {
             ok: true,
-            result: this.service.getBuffer(request.params.id),
+            result: toIpcSnapshot(
+              this.service.getBuffer(request.params.id),
+              request.params.includeText === true,
+            ),
+          };
+        case "slice":
+          return {
+            ok: true,
+            result: {
+              text: this.service.slice(
+                request.params.id,
+                request.params.start,
+                request.params.end,
+              ),
+            } satisfies SliceResult,
+          };
+        case "line_window":
+          return {
+            ok: true,
+            result: this.service.lineWindow(
+              request.params.id,
+              request.params.lineStart,
+              request.params.lineCount,
+            ) satisfies LineWindowResult,
+          };
+        case "buffer_len":
+          return {
+            ok: true,
+            result: {
+              len: this.service.len(request.params.id),
+            } satisfies BufferLenResult,
+          };
+        case "buffer_rev":
+          return {
+            ok: true,
+            result: {
+              rev: this.service.rev(request.params.id),
+            } satisfies BufferRevResult,
           };
         case "accept": {
           const accept = this.service.accept(request.params.patches);
           const ids = [
             ...new Set(request.params.patches.map((p) => p.bufferId)),
           ];
-          const buffers = ids.map((id) => this.service.getBuffer(id));
+          const buffers = ids.map((id) =>
+            toIpcSnapshot(this.service.getBuffer(id), false),
+          );
           return { ok: true, result: { accept, buffers } satisfies AcceptIpcResult };
         }
         case "evoke": {

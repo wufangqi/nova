@@ -156,7 +156,7 @@ describe("IPC explicit replace only Accepts", () => {
 
     const afterDraft = await host.handle({
       method: "get_buffer",
-      params: { id: evoked.result.buffer.id },
+      params: { id: evoked.result.buffer.id, includeText: true },
     });
     assert.equal(afterDraft.ok, true);
     if (!afterDraft.ok) return;

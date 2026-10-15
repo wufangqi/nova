@@ -144,7 +144,7 @@ describe("IPC Accept / reject / UndoGroup", () => {
 
     const afterReject = await host.handle({
       method: "get_buffer",
-      params: { id: evoked.result.buffer.id },
+      params: { id: evoked.result.buffer.id, includeText: true },
     });
     assert.equal(afterReject.ok, true);
     if (!afterReject.ok) return;
@@ -170,7 +170,14 @@ describe("IPC Accept / reject / UndoGroup", () => {
     if (!accepted.ok) return;
     assert.equal(accepted.result.accept.ok, true);
     if (!accepted.result.accept.ok) return;
-    assert.equal(accepted.result.buffers[0]!.text, "HELLO world");
+    assert.equal(accepted.result.buffers[0]!.text, undefined);
+    const afterAccept = await host.handle({
+      method: "slice",
+      params: { id: evoked.result.buffer.id, start: 0, end: 11 },
+    });
+    assert.equal(afterAccept.ok, true);
+    if (!afterAccept.ok) return;
+    assert.equal(afterAccept.result.text, "HELLO world");
 
     const undone = await host.handle({
       method: "undo",

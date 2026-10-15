@@ -196,15 +196,62 @@ pub fn create_buffer(bridge: &SharedBridge, text: Option<String>) -> Result<Valu
     unwrap_ipc(response)
 }
 
-pub fn get_buffer(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+pub fn get_buffer(
+    bridge: &SharedBridge,
+    id: String,
+    include_text: Option<bool>,
+) -> Result<Value, String> {
     let mut guard = bridge
         .lock()
         .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let mut params = json!({ "id": id });
+    if let Some(include) = include_text {
+        params["includeText"] = json!(include);
+    }
     let response = guard.call(json!({
         "method": "get_buffer",
-        "params": { "id": id }
+        "params": params
     }))?;
     unwrap_ipc(response)
+}
+
+/// WUF-98 — thin forwards for core-equivalent slice / line window / len / rev.
+pub fn slice(
+    bridge: &SharedBridge,
+    id: String,
+    start: u64,
+    end: u64,
+) -> Result<Value, String> {
+    call_params(
+        bridge,
+        "slice",
+        json!({ "id": id, "start": start, "end": end }),
+    )
+}
+
+pub fn line_window(
+    bridge: &SharedBridge,
+    id: String,
+    line_start: u64,
+    line_count: u64,
+) -> Result<Value, String> {
+    call_params(
+        bridge,
+        "line_window",
+        json!({
+            "id": id,
+            "lineStart": line_start,
+            "lineCount": line_count
+        }),
+    )
+}
+
+pub fn buffer_len(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    call_params(bridge, "buffer_len", json!({ "id": id }))
+}
+
+pub fn buffer_rev(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    call_params(bridge, "buffer_rev", json!({ "id": id }))
 }
 
 pub fn accept(bridge: &SharedBridge, patches: Value) -> Result<Value, String> {

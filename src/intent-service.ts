@@ -5,10 +5,12 @@ import {
   createBuffer as coreCreateBuffer,
   dropBuffer,
   len as coreLen,
+  lineWindow as coreLineWindow,
   rev as coreRev,
   setText as coreSetText,
   slice as coreSlice,
   undo as coreUndo,
+  type LineWindow,
 } from "./buffer-core.js";
 import {
   buildExplanation,
@@ -202,6 +204,32 @@ export class IntentService {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
     return snapshot(b);
+  }
+
+  /** Core-equivalent slice — does not require holding full Buffer text in JS. */
+  slice(id: BufferId, start: number, end: number): string {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreSlice(id, start, end);
+  }
+
+  /** Core-equivalent line window. */
+  lineWindow(
+    id: BufferId,
+    lineStart: number,
+    lineCount: number,
+  ): LineWindow {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreLineWindow(id, lineStart, lineCount);
+  }
+
+  len(id: BufferId): number {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreLen(id);
+  }
+
+  rev(id: BufferId): number {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreRev(id);
   }
 
   /** Direct human edit of logical text (not a Patch Accept). */

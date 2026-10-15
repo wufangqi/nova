@@ -31,14 +31,23 @@ describe("IPC create_buffer", () => {
     });
     assert.equal(res.ok, true);
     if (!res.ok) return;
-    assert.equal(res.result.text, "hello");
+    // Default IPC snapshot omits full text (WUF-98).
+    assert.equal(res.result.text, undefined);
     assert.equal(res.result.revision, 0);
     assert.equal(typeof res.result.id, "string");
+
+    const slice = await host.handle({
+      method: "slice",
+      params: { id: res.result.id, start: 0, end: 5 },
+    });
+    assert.equal(slice.ok, true);
+    if (!slice.ok) return;
+    assert.equal(slice.result.text, "hello");
   });
 });
 
 describe("IPC accept hand-crafted Patch", () => {
-  it("Accepts through IntentService and returns updated Buffer text", async () => {
+  it("Accepts through IntentService; verify text via slice not full snapshot", async () => {
     const host = new IntentIpcHost();
     const created = await host.handle({
       method: "create_buffer",
@@ -66,6 +75,7 @@ describe("IPC accept hand-crafted Patch", () => {
     assert.equal(accept.ok, true);
     if (!accept.ok) return;
     assert.equal(accept.result.accept.ok, true);
+    assert.equal(accept.result.buffers[0]!.text, undefined);
 
     const got = await host.handle({
       method: "get_buffer",
@@ -73,7 +83,15 @@ describe("IPC accept hand-crafted Patch", () => {
     });
     assert.equal(got.ok, true);
     if (!got.ok) return;
-    assert.equal(got.result.text, "hello nova");
+    assert.equal(got.result.text, undefined);
+
+    const slice = await host.handle({
+      method: "slice",
+      params: { id: created.result.id, start: 0, end: 10 },
+    });
+    assert.equal(slice.ok, true);
+    if (!slice.ok) return;
+    assert.equal(slice.result.text, "hello nova");
   });
 
   it("does not open a write path outside IntentService.accept", async () => {

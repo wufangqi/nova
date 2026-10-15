@@ -184,7 +184,18 @@ describe("IPC save → list → preview_run → accept loop", () => {
     assert.equal(accepted.ok, true);
     if (!accepted.ok) return;
     assert.equal(accepted.result.accept.ok, true);
-    assert.equal(accepted.result.buffers[0]!.text, "blue fox red hen");
+    assert.equal(accepted.result.buffers[0]!.text, undefined);
+    const sliced = await host.handle({
+      method: "slice",
+      params: {
+        id: accepted.result.buffers[0]!.id,
+        start: 0,
+        end: 16,
+      },
+    });
+    assert.equal(sliced.ok, true);
+    if (!sliced.ok) return;
+    assert.equal(sliced.result.text, "blue fox red hen");
   });
 });
 
