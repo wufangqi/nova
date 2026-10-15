@@ -33,6 +33,38 @@ export interface UndoResult {
   ok: boolean;
 }
 
+export interface FindQuery {
+  pattern: string;
+  /** Flag chars: `i` / `m` / `s`. */
+  flags?: string | null;
+  start?: number | null;
+  end?: number | null;
+  maxMatches?: number | null;
+}
+
+export interface FindCapture {
+  index: number;
+  text: string;
+}
+
+export interface FindHitCore {
+  start: number;
+  end: number;
+  matchText: string;
+  /** 0-based line index. */
+  line: number;
+  /** 0-based character column. */
+  column: number;
+  captures: FindCapture[];
+}
+
+export interface FindProgress {
+  status: "running" | "done" | "cancelled" | "error" | string;
+  hits: FindHitCore[];
+  count: number;
+  error?: string | null;
+}
+
 type Binding = {
   createUntitled(): string;
   createBuffer(text: string): string;
@@ -62,6 +94,9 @@ type Binding = {
     undoGroupId?: string | null;
   };
   undo(bufferId: string, undoGroupId: string): UndoResult;
+  findStart(bufferId: string, query: FindQuery): string;
+  findPoll(jobId: string): FindProgress;
+  findCancel(jobId: string): void;
 };
 
 const require = createRequire(import.meta.url);
@@ -125,4 +160,28 @@ export function applyAccept(
 
 export function undo(bufferId: string, undoGroupId: string): UndoResult {
   return binding.undo(bufferId, undoGroupId);
+}
+
+export function findStart(bufferId: string, query: FindQuery): string {
+  return binding.findStart(bufferId, query);
+}
+
+export function findPoll(jobId: string): FindProgress {
+  return binding.findPoll(jobId);
+}
+
+export function findCancel(jobId: string): void {
+  binding.findCancel(jobId);
+}
+
+/** Poll until Find reaches a terminal status (`done` | `cancelled` | `error`). */
+export function findAwait(
+  jobId: string,
+  maxPolls = 1_000_000,
+): FindProgress {
+  for (let i = 0; i < maxPolls; i++) {
+    const progress = findPoll(jobId);
+    if (progress.status !== "running") return progress;
+  }
+  throw new Error(`find job ${jobId} still running after ${maxPolls} polls`);
 }

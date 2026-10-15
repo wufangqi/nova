@@ -6,6 +6,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use regex::{Regex, RegexBuilder};
 use ropey::Rope;
 use uuid::Uuid;
 
@@ -479,4 +480,291 @@ pub fn undo(buffer_id: String, undo_group_id: String) -> Result<UndoResult> {
     entry.rev = group.rev_before;
     Ok(UndoResult { ok: true })
   })
+}
+
+// --- Find (WUF-100): Rust `regex`, poll-driven cancellable jobs ---
+
+/// Matches processed per `find_poll` step (keeps cancel responsive).
+const FIND_POLL_BATCH: usize = 256;
+
+#[napi(object)]
+pub struct FindQuery {
+  pub pattern: String,
+  /// Flag chars: `i` (case), `m` (multiline), `s` (dotall).
+  pub flags: Option<String>,
+  /// Inclusive char start of Scope; default 0.
+  pub start: Option<u32>,
+  /// Exclusive char end of Scope; default Buffer len.
+  pub end: Option<u32>,
+  /// Soft cap on matches returned (scan stops early when reached).
+  pub max_matches: Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct FindCapture {
+  pub index: u32,
+  pub text: String,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct FindHitCore {
+  pub start: u32,
+  pub end: u32,
+  pub match_text: String,
+  /// 0-based line index in the Buffer.
+  pub line: u32,
+  /// 0-based character column within the line.
+  pub column: u32,
+  pub captures: Vec<FindCapture>,
+}
+
+#[napi(object)]
+pub struct FindProgress {
+  /// `running` | `done` | `cancelled` | `error`
+  pub status: String,
+  pub hits: Vec<FindHitCore>,
+  pub count: u32,
+  pub error: Option<String>,
+}
+
+enum FindJobKind {
+  Ready {
+    haystack: String,
+    span_start: usize,
+    line_starts: Vec<usize>,
+    re: Regex,
+    /// Byte offset into haystack for the next search.
+    byte_cursor: usize,
+    hits: Vec<FindHitCore>,
+    max_matches: usize,
+    cancel: bool,
+  },
+  Done {
+    hits: Vec<FindHitCore>,
+  },
+  Cancelled {
+    hits: Vec<FindHitCore>,
+  },
+  Error {
+    message: String,
+  },
+}
+
+static FIND_JOBS: Lazy<Mutex<HashMap<String, FindJobKind>>> =
+  Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn byte_to_char(s: &str, byte: usize) -> usize {
+  s[..byte].chars().count()
+}
+
+fn build_regex(pattern: &str, flags: Option<&str>) -> std::result::Result<Regex, String> {
+  let flags = flags.unwrap_or("");
+  let mut builder = RegexBuilder::new(pattern);
+  builder.case_insensitive(flags.contains('i'));
+  builder.multi_line(flags.contains('m'));
+  builder.dot_matches_new_line(flags.contains('s'));
+  builder.build().map_err(|e| e.to_string())
+}
+
+fn line_column(line_starts: &[usize], abs_start: usize) -> (usize, usize) {
+  let line = match line_starts.binary_search(&abs_start) {
+    Ok(i) => i,
+    Err(i) => i.saturating_sub(1),
+  };
+  let column = abs_start.saturating_sub(line_starts.get(line).copied().unwrap_or(0));
+  (line, column)
+}
+
+fn progress_from_job(job: &FindJobKind) -> FindProgress {
+  match job {
+    FindJobKind::Ready { hits, .. } => FindProgress {
+      status: "running".into(),
+      hits: hits.clone(),
+      count: hits.len() as u32,
+      error: None,
+    },
+    FindJobKind::Done { hits } => FindProgress {
+      status: "done".into(),
+      hits: hits.clone(),
+      count: hits.len() as u32,
+      error: None,
+    },
+    FindJobKind::Cancelled { hits } => FindProgress {
+      status: "cancelled".into(),
+      hits: hits.clone(),
+      count: hits.len() as u32,
+      error: None,
+    },
+    FindJobKind::Error { message } => FindProgress {
+      status: "error".into(),
+      hits: Vec::new(),
+      count: 0,
+      error: Some(message.clone()),
+    },
+  }
+}
+
+/// Start a cancellable Find job on Buffer text (Rust `regex` crate).
+/// Work advances on `find_poll` so `find_cancel` is deterministic between steps.
+#[napi]
+pub fn find_start(buffer_id: String, query: FindQuery) -> Result<String> {
+  let prepared = with_buffer(&buffer_id, |entry| {
+    let len = entry.rope.len_chars();
+    let start = query.start.unwrap_or(0) as usize;
+    let end = query.end.unwrap_or(len as u32) as usize;
+    if start > end || end > len {
+      return Err(Error::from_reason(format!(
+        "find scope out of range: start={start} end={end} len={len}"
+      )));
+    }
+    let haystack = entry.rope.slice(start..end).to_string();
+    let mut line_starts: Vec<usize> = Vec::with_capacity(entry.rope.len_lines());
+    for i in 0..entry.rope.len_lines() {
+      line_starts.push(entry.rope.line_to_char(i));
+    }
+    Ok((haystack, start, line_starts))
+  });
+
+  let job_id = Uuid::new_v4().to_string();
+  let job = match prepared {
+    Ok((haystack, span_start, line_starts)) => match build_regex(&query.pattern, query.flags.as_deref())
+    {
+      Ok(re) => FindJobKind::Ready {
+        haystack,
+        span_start,
+        line_starts,
+        re,
+        byte_cursor: 0,
+        hits: Vec::new(),
+        max_matches: query.max_matches.unwrap_or(u32::MAX) as usize,
+        cancel: false,
+      },
+      Err(message) => FindJobKind::Error { message },
+    },
+    Err(e) => FindJobKind::Error {
+      message: e.reason,
+    },
+  };
+
+  FIND_JOBS.lock().insert(job_id.clone(), job);
+  Ok(job_id)
+}
+
+/// Advance Find by one batch. Terminal: `done` | `cancelled` | `error`.
+#[napi]
+pub fn find_poll(job_id: String) -> Result<FindProgress> {
+  let mut jobs = FIND_JOBS.lock();
+  let job = jobs
+    .get_mut(&job_id)
+    .ok_or_else(|| Error::from_reason(format!("unknown find job: {job_id}")))?;
+
+  if let FindJobKind::Ready {
+    haystack,
+    span_start,
+    line_starts,
+    re,
+    byte_cursor,
+    hits,
+    max_matches,
+    cancel,
+  } = job
+  {
+    if *cancel {
+      let hits = std::mem::take(hits);
+      *job = FindJobKind::Cancelled { hits };
+      return Ok(progress_from_job(job));
+    }
+
+    let mut batch = 0usize;
+    loop {
+      if *cancel {
+        let hits = std::mem::take(hits);
+        *job = FindJobKind::Cancelled { hits };
+        return Ok(progress_from_job(job));
+      }
+      if hits.len() >= *max_matches {
+        let hits = std::mem::take(hits);
+        *job = FindJobKind::Done { hits };
+        return Ok(progress_from_job(job));
+      }
+      if batch >= FIND_POLL_BATCH {
+        break;
+      }
+
+      let Some(caps) = re.captures_at(haystack, *byte_cursor) else {
+        let hits = std::mem::take(hits);
+        *job = FindJobKind::Done { hits };
+        return Ok(progress_from_job(job));
+      };
+      let m = match caps.get(0) {
+        Some(m) => m,
+        None => {
+          let hits = std::mem::take(hits);
+          *job = FindJobKind::Done { hits };
+          return Ok(progress_from_job(job));
+        }
+      };
+
+      let local_start = byte_to_char(haystack, m.start());
+      let local_end = byte_to_char(haystack, m.end());
+      let abs_start = *span_start + local_start;
+      let abs_end = *span_start + local_end;
+      let (line, column) = line_column(line_starts, abs_start);
+
+      let mut captures = Vec::new();
+      for i in 1..caps.len() {
+        if let Some(g) = caps.get(i) {
+          captures.push(FindCapture {
+            index: i as u32,
+            text: g.as_str().to_string(),
+          });
+        }
+      }
+
+      hits.push(FindHitCore {
+        start: abs_start as u32,
+        end: abs_end as u32,
+        match_text: m.as_str().to_string(),
+        line: line as u32,
+        column: column as u32,
+        captures,
+      });
+      batch += 1;
+
+      // Advance past this match (empty-match safe).
+      let next = if m.end() > m.start() {
+        m.end()
+      } else if m.start() < haystack.len() {
+        let mut n = m.start() + 1;
+        while n < haystack.len() && !haystack.is_char_boundary(n) {
+          n += 1;
+        }
+        n
+      } else {
+        let hits = std::mem::take(hits);
+        *job = FindJobKind::Done { hits };
+        return Ok(progress_from_job(job));
+      };
+      *byte_cursor = next;
+    }
+
+    return Ok(progress_from_job(job));
+  }
+
+  Ok(progress_from_job(job))
+}
+
+/// Request cancellation. Distinct from zero matches (`done` + count 0).
+#[napi]
+pub fn find_cancel(job_id: String) -> Result<()> {
+  let mut jobs = FIND_JOBS.lock();
+  let job = jobs
+    .get_mut(&job_id)
+    .ok_or_else(|| Error::from_reason(format!("unknown find job: {job_id}")))?;
+  if let FindJobKind::Ready { cancel, .. } = job {
+    *cancel = true;
+  }
+  Ok(())
 }

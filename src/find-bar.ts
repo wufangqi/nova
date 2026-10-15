@@ -1,9 +1,18 @@
+import {
+  findAwait,
+  findStart,
+  len as coreLen,
+  rev as coreRev,
+  slice as coreSlice,
+  type FindHitCore,
+  type FindProgress,
+} from "./buffer-core.js";
 import { IntentService } from "./intent-service.js";
 import {
-  compilePcre,
   expandReplacement,
+  flagsToCoreString,
+  hitToReplacementMatch,
   type PcreFlags,
-  PcreCompileError,
 } from "./pcre.js";
 import {
   draftFlagsString,
@@ -28,11 +37,19 @@ export interface FindHit {
   match: string;
   /** Capture groups (index 1…); empty when none. */
   groups: Record<number, string>;
+  /** 0-based line index in the Buffer (from core). */
+  line: number;
+  /** 0-based character column (from core). */
+  column: number;
 }
 
 export interface FindResult {
   hits: FindHit[];
   count: number;
+  /** Present when the core job ended as cancelled (distinct from count 0). */
+  cancelled?: boolean;
+  /** Present when the core rejected the pattern (e.g. lookaround / PCRE debt). */
+  error?: string;
 }
 
 export type PreviewReplaceOk = { ok: true; patches: Patch[] };
@@ -55,46 +72,61 @@ export interface ReplaceInput extends FindInput {
   replacement?: string;
 }
 
-function resolveScope(
-  text: string,
+function resolveScopeBounds(
+  textLen: number,
   scope: TextScope | undefined,
 ): { start: number; end: number } | null {
   if (!scope || scope.kind === "buffer") {
-    return { start: 0, end: text.length };
+    return { start: 0, end: textLen };
   }
   if (
     scope.start < 0 ||
     scope.end < scope.start ||
-    scope.end > text.length
+    scope.end > textLen
   ) {
     return null;
   }
   return { start: scope.start, end: scope.end };
 }
 
-function matchInScope(
-  fullText: string,
-  span: { start: number; end: number },
-  pattern: string,
-  flags: PcreFlags | undefined,
-  onMatch: (m: RegExpMatchArray, start: number, end: number) => void,
-): void {
-  const haystack = fullText.slice(span.start, span.end);
-  const re = compilePcre(pattern, flags);
-  for (const m of haystack.matchAll(re)) {
-    const localStart = m.index ?? 0;
-    const matchText = m[0] ?? "";
-    const start = span.start + localStart;
-    const end = start + matchText.length;
-    onMatch(m, start, end);
-    if (matchText.length === 0) {
-      re.lastIndex = localStart + 1;
-    }
+function coreHitToFindHit(h: FindHitCore): FindHit {
+  const groups: Record<number, string> = {};
+  for (const c of h.captures ?? []) {
+    groups[c.index] = c.text;
   }
+  return {
+    start: h.start,
+    end: h.end,
+    match: h.matchText,
+    groups,
+    line: h.line,
+    column: h.column,
+  };
+}
+
+function progressToFindResult(progress: FindProgress): FindResult {
+  if (progress.status === "cancelled") {
+    return {
+      hits: progress.hits.map(coreHitToFindHit),
+      count: progress.count,
+      cancelled: true,
+    };
+  }
+  if (progress.status === "error") {
+    return {
+      hits: [],
+      count: 0,
+      error: progress.error ?? "invalid_pattern",
+    };
+  }
+  return {
+    hits: progress.hits.map(coreHitToFindHit),
+    count: progress.count,
+  };
 }
 
 /**
- * Deterministic FindBar: PCRE find + replace-over-Scope → Patch.
+ * Deterministic FindBar: core-side Rust `regex` find + replace-over-Scope → Patch.
  * Writes only through IntentService.accept — never mutates Buffer itself.
  * RegexDraft (WUF-77) populates this surface; replace is an explicit second step.
  */
@@ -148,74 +180,68 @@ export class FindBar {
     return input.replacement ?? this.replacement;
   }
 
-  find(input: FindInput): FindResult {
+  private runCoreFind(input: FindInput): FindResult {
     const pattern = this.resolvePattern(input);
     if (!pattern) return { hits: [], count: 0 };
 
-    const buf = this.intent.getBuffer(input.bufferId);
-    const span = resolveScope(buf.text, input.scope);
+    const textLen = coreLen(input.bufferId);
+    const span = resolveScopeBounds(textLen, input.scope);
     if (!span) return { hits: [], count: 0 };
 
-    const hits: FindHit[] = [];
-    matchInScope(
-      buf.text,
-      span,
+    const flags = flagsToCoreString(this.resolveFlags(input));
+    const jobId = findStart(input.bufferId, {
       pattern,
-      this.resolveFlags(input),
-      (m, start, end) => {
-        const groups: Record<number, string> = {};
-        for (let g = 1; g < m.length; g++) {
-          if (m[g] !== undefined) groups[g] = m[g]!;
-        }
-        hits.push({ start, end, match: m[0] ?? "", groups });
-      },
-    );
-    return { hits, count: hits.length };
+      ...(flags ? { flags } : {}),
+      start: span.start,
+      end: span.end,
+    });
+    return progressToFindResult(findAwait(jobId));
+  }
+
+  find(input: FindInput): FindResult {
+    return this.runCoreFind(input);
   }
 
   /**
    * Build Patch[] for replace-over-Scope. Does not Accept / mutate Buffer.
    * Pattern/replacement come from input or the loaded RegexDraft.
+   * Hits come from the Rust Find engine (same as `find`).
    */
   previewReplace(input: ReplaceInput): PreviewReplaceResult {
     const pattern = this.resolvePattern(input);
     if (!pattern) return { ok: false, reason: "no_pattern" };
 
-    const buf = this.intent.getBuffer(input.bufferId);
-    const span = resolveScope(buf.text, input.scope);
+    const textLen = coreLen(input.bufferId);
+    const span = resolveScopeBounds(textLen, input.scope);
     if (!span) return { ok: false, reason: "invalid_scope" };
 
+    const found = this.runCoreFind(input);
+    if (found.error) return { ok: false, reason: "invalid_pattern" };
+    if (found.cancelled) return { ok: false, reason: "no_matches" };
+    if (!found.hits.length) return { ok: false, reason: "no_matches" };
+
     const replacement = this.resolveReplacement(input);
-    const edits: TextEdit[] = [];
-    try {
-      matchInScope(
-        buf.text,
-        span,
-        pattern,
-        this.resolveFlags(input),
-        (m, start, end) => {
-          edits.push({
-            start,
-            end,
-            replacement: expandReplacement(replacement, m),
-            before: buf.text.slice(Math.max(0, start - 8), start),
-            after: buf.text.slice(end, Math.min(buf.text.length, end + 8)),
-          });
-        },
-      );
-    } catch (err) {
-      if (err instanceof PcreCompileError) {
-        return { ok: false, reason: "invalid_pattern" };
-      }
-      throw err;
-    }
-    if (!edits.length) return { ok: false, reason: "no_matches" };
+    const revision = coreRev(input.bufferId);
+    const edits: TextEdit[] = found.hits.map((hit) => {
+      const beforeStart = Math.max(0, hit.start - 8);
+      const afterEnd = Math.min(textLen, hit.end + 8);
+      return {
+        start: hit.start,
+        end: hit.end,
+        replacement: expandReplacement(
+          replacement,
+          hitToReplacementMatch(hit.match, hit.groups),
+        ),
+        before: coreSlice(input.bufferId, beforeStart, hit.start),
+        after: coreSlice(input.bufferId, hit.end, afterEnd),
+      };
+    });
 
     const patch: Patch = {
-      bufferId: buf.id,
-      baseRevision: buf.revision,
+      bufferId: input.bufferId,
+      baseRevision: revision,
       edits,
-      provenance: { source: "findbar", label: "pcre-replace" },
+      provenance: { source: "findbar", label: "regex-replace" },
     };
     return { ok: true, patches: [patch] };
   }

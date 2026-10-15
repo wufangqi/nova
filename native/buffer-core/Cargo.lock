@@ -191,6 +191,7 @@ dependencies = [
  "napi-derive",
  "once_cell",
  "parking_lot",
+ "regex",
  "ropey",
  "uuid",
 ]
