@@ -17,7 +17,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto 1fr auto auto auto;
+  grid-template-rows: auto auto 1fr auto auto auto auto;
   min-height: 100vh;
 }
 
@@ -296,6 +296,66 @@ button.tab.active {
   font-size: 0.88rem;
   color: #555;
   font-weight: 400;
+}
+
+.action-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.75rem;
+  background: #e0e4df;
+  border-top: 1px solid #bdb7aa;
+  max-height: 12rem;
+}
+
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.action-heading {
+  font-weight: 650;
+}
+
+.action-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  overflow: auto;
+  max-height: 9rem;
+}
+
+.action-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid #bdb7aa;
+  border-radius: 3px;
+  background: #f7f5f0;
+}
+
+.action-list .action-name {
+  flex: 1 1 8rem;
+  min-width: 6rem;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action-list button {
+  background: #f7f5f0;
+  color: #1c1c1c;
+  border-color: #8a7f6a;
+  font-weight: 500;
+  padding: 0.25rem 0.55rem;
 }
 
 .status {

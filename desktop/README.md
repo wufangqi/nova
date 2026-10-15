@@ -74,5 +74,6 @@ npm run desktop:build
 | --- | --- |
 | 标签 / 编辑 / 打开保存 | `EditorShell.*` |
 | Intent Preview / Accept / Undo | `IntentService.parse` · `preview` · `accept` · `undo` |
+| Save as Action / 列表再跑·改名·删 | `ActionService.*`（经 IPC；落笔仍走 `accept` / `reject`） |
 | 全局热键 | OS shortcut → `evoke` + `hotkey-evoke` 事件 |
 | Demo | 与 `runVisualTenSecondDemo` 同一 IPC 序列 |

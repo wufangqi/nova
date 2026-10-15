@@ -103,6 +103,14 @@ placeholder="e.g. uppercase / regex a(\d) / explain this"
           <button type="button" id="intent-accept" disabled>Accept</button>
           <button type="button" id="intent-reject" disabled>Reject</button>
           <button type="button" id="intent-undo" disabled>Undo</button>
+          <button
+            type="button"
+            id="save-as-action"
+            disabled
+            title="Save current RegexDraft as a reusable Action"
+          >
+            Save as Action
+          </button>
         </div>
         <div id="intent-meta" class="intent-meta" hidden></div>
         <div id="outbound-banner" class="outbound-banner" hidden role="status"></div>
@@ -122,6 +130,16 @@ placeholder="e.g. uppercase / regex a(\d) / explain this"
           <p id="explanation-summary" class="explanation-summary"></p>
           <ul id="explanation-anchors" class="explanation-anchors"></ul>
         </div>
+      </section>
+
+      <section class="action-panel" aria-label="Actions">
+        <div class="action-bar">
+          <span class="action-heading">Actions</span>
+          <button type="button" id="action-refresh" title="Reload Action list">
+            Refresh
+          </button>
+        </div>
+        <ul id="action-list" class="action-list" aria-live="polite"></ul>
       </section>
 
       <p id="status" class="status" aria-live="polite"></p>
