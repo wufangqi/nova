@@ -34,11 +34,14 @@ export function buildRegexDraft(utterance: string): RegexDraft {
   const lower = trimmed.toLowerCase();
 
   // Explicit: regex <pattern>  or  regex /pattern/flags
+  // or sed-style replace: regex s/pattern/replacement/flags (Action Demo path)
   if (lower.startsWith("regex")) {
     const rest = trimmed.slice("regex".length).trim();
     if (rest.length === 0) {
       return { pattern: ".*", flags: "g" };
     }
+    const sed = parseSedReplace(rest);
+    if (sed) return sed;
     const slash = parseSlashPattern(rest);
     if (slash) return slash;
     return { pattern: rest, flags: "g" };
@@ -64,6 +67,30 @@ function parseSlashPattern(rest: string): RegexDraft | null {
   const pattern = rest.slice(1, end);
   const flags = rest.slice(end + 1) || "g";
   return { pattern, flags: flags.includes("g") ? flags : `${flags}g` };
+}
+
+/**
+ * Sed-style `s/pattern/replacement/flags` → RegexDraft with replacement.
+ * Enables Intent → save Action → preview_run → Accept without FindBar edit.
+ */
+function parseSedReplace(rest: string): RegexDraft | null {
+  const body = rest.trim();
+  if (!/^s\//i.test(body)) return null;
+  const afterS = body.slice(2); // drop leading s/
+  const patEnd = afterS.indexOf("/");
+  if (patEnd < 0) return null;
+  const pattern = afterS.slice(0, patEnd);
+  const afterPat = afterS.slice(patEnd + 1);
+  const replEnd = afterPat.indexOf("/");
+  if (replEnd < 0) {
+    // s/pat/repl — no trailing flags
+    if (afterPat.length === 0) return null;
+    return { pattern, replacement: afterPat, flags: "g" };
+  }
+  const replacement = afterPat.slice(0, replEnd);
+  const flagsRaw = afterPat.slice(replEnd + 1);
+  const flags = flagsRaw.length === 0 ? "g" : flagsRaw.includes("g") ? flagsRaw : `${flagsRaw}g`;
+  return { pattern, replacement, flags };
 }
 
 function patternFromPhrase(lower: string): string {

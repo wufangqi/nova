@@ -52,6 +52,11 @@ export type {
   TenSecondDemoOptions,
   TenSecondDemoResult,
 } from "./ten-second-demo.js";
+export { runActionStageDemo } from "./action-stage-demo.js";
+export type {
+  ActionStageDemoOptions,
+  ActionStageDemoResult,
+} from "./action-stage-demo.js";
 export { runVisualTenSecondDemo } from "./visual-ten-second-demo.js";
 export type {
   VisualTenSecondDemoOptions,
