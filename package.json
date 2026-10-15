@@ -12,8 +12,9 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "tsx --test tests/**/*.test.ts",
+    "build:native": "npm --prefix native/buffer-core install && npm --prefix native/buffer-core run build",
+    "build": "npm run build:native && tsc -p tsconfig.json",
+    "test": "npm run build:native && tsx --test tests/**/*.test.ts",
     "notepad": "tsx src/cli/notepad.ts",
     "notepad:demo": "tsx src/cli/notepad-demo.ts",
     "demo:ten-second": "tsx src/cli/ten-second-demo.ts",

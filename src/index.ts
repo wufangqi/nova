@@ -1,3 +1,14 @@
+export {
+  createUntitled,
+  openPath as openBufferCorePath,
+  save as saveBufferCore,
+  len as bufferCoreLen,
+  rev as bufferCoreRev,
+  slice as bufferCoreSlice,
+  lineWindow as bufferCoreLineWindow,
+  dropBuffer,
+} from "./buffer-core.js";
+export type { LineWindow } from "./buffer-core.js";
 export { IntentService } from "./intent-service.js";
 export {
   ActionService,
