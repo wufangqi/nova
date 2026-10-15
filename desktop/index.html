@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nova</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div class="app">
+      <header class="toolbar">
+        <button type="button" id="new-tab">New</button>
+        <button
+          type="button"
+          id="run-demo"
+          title="Visual ten-second Demo: new Buffer → paste → Intent → diff → Accept"
+        >
+          Demo
+        </button>
+        <label class="path-field">
+          <span>Path</span>
+          <input id="path-input" type="text" placeholder="C:\notes\demo.txt" spellcheck="false" />
+        </label>
+        <button type="button" id="open-path">Open</button>
+        <button type="button" id="save">Save</button>
+        <button type="button" id="close-tab">Close</button>
+      </header>
+
+      <nav id="tab-bar" class="tab-bar" aria-label="Buffers"></nav>
+
+      <textarea
+        id="editor"
+        class="editor"
+        spellcheck="false"
+        placeholder="Untitled Buffer — start typing"
+        disabled
+      ></textarea>
+
+      <section class="find-panel" aria-label="FindBar">
+        <div class="find-bar">
+          <label class="find-field">
+            <span>Find</span>
+            <input
+              id="find-pattern"
+              type="text"
+              placeholder="PCRE pattern"
+              spellcheck="false"
+            />
+          </label>
+          <label class="find-field">
+            <span>Replace</span>
+            <input
+              id="find-replacement"
+              type="text"
+              placeholder="replacement ($1…)"
+              spellcheck="false"
+            />
+          </label>
+          <label class="flag-toggle" title="Case insensitive">
+            <input id="find-flag-i" type="checkbox" />
+            <span>i</span>
+          </label>
+          <label class="flag-toggle" title="Multiline">
+            <input id="find-flag-m" type="checkbox" />
+            <span>m</span>
+          </label>
+          <label class="flag-toggle" title="Dotall">
+            <input id="find-flag-s" type="checkbox" />
+            <span>s</span>
+          </label>
+          <button type="button" id="find-go">Find</button>
+          <button type="button" id="find-preview-replace">Preview replace</button>
+          <button type="button" id="find-replace-accept" disabled>Replace Accept</button>
+        </div>
+        <pre id="find-hits" class="find-hits" hidden aria-live="polite"></pre>
+      </section>
+
+      <section class="intent-panel" aria-label="Intent preview">
+        <div class="intent-bar">
+          <label class="intent-field">
+            <span>Intent</span>
+            <input
+              id="intent-input"
+              type="text"
+placeholder="e.g. uppercase / regex a(\d) / explain this"
+              spellcheck="false"
+            />
+          </label>
+          <label class="cloud-toggle" title="When on, preview surfaces Outbound">
+            <input id="cloud-enabled" type="checkbox" />
+            <span>Cloud path</span>
+          </label>
+          <label
+            class="cloud-toggle"
+            title="When on, paste may offer a few Suggestions (default off)"
+          >
+            <input id="suggestions-enabled" type="checkbox" />
+            <span>Suggestions</span>
+          </label>
+          <button type="button" id="intent-preview">Preview</button>
+          <button type="button" id="intent-accept" disabled>Accept</button>
+          <button type="button" id="intent-reject" disabled>Reject</button>
+          <button type="button" id="intent-undo" disabled>Undo</button>
+        </div>
+        <div id="intent-meta" class="intent-meta" hidden></div>
+        <div id="outbound-banner" class="outbound-banner" hidden role="status"></div>
+        <div
+          id="suggestions-bar"
+          class="suggestions-bar"
+          hidden
+          aria-label="Clipboard Suggestions"
+        ></div>
+        <pre id="patch-diff" class="patch-diff" hidden aria-live="polite"></pre>
+        <div
+          id="explanation-panel"
+          class="explanation-panel"
+          hidden
+          aria-label="Explanation"
+        >
+          <p id="explanation-summary" class="explanation-summary"></p>
+          <ul id="explanation-anchors" class="explanation-anchors"></ul>
+        </div>
+      </section>
+
+      <p id="status" class="status" aria-live="polite"></p>
+    </div>
+  </body>
+</html>

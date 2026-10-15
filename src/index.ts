@@ -1,4 +1,11 @@
 export { IntentService } from "./intent-service.js";
+export { IntentIpcHost } from "./ipc/host.js";
+export type {
+  IpcMethod,
+  IpcRequest,
+  IpcResponse,
+  AcceptIpcResult,
+} from "./ipc/protocol.js";
 export {
   buildExplanation,
   isExplainUtterance,
@@ -21,6 +28,11 @@ export type {
   ValidateResult,
 } from "./model-gateway.js";
 export { EditorShell } from "./editor-shell.js";
+export {
+  GLOBAL_HOTKEY_ACCELERATOR,
+  HOTKEY_EVOKE_EVENT,
+  onGlobalHotkeyPressed,
+} from "./global-hotkey.js";
 export { FindBar } from "./find-bar.js";
 export { MojibakeRepair } from "./mojibake-repair.js";
 export {
@@ -33,6 +45,11 @@ export type {
   TenSecondDemoOptions,
   TenSecondDemoResult,
 } from "./ten-second-demo.js";
+export { runVisualTenSecondDemo } from "./visual-ten-second-demo.js";
+export type {
+  VisualTenSecondDemoOptions,
+  VisualTenSecondDemoResult,
+} from "./visual-ten-second-demo.js";
 export {
   runWindowsGates,
   LARGE_FILE_CHARS,

@@ -1,0 +1,308 @@
+:root {
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  color: #1c1c1c;
+  background: #ece9e2;
+  line-height: 1.4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto auto;
+  min-height: 100vh;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.55rem 0.75rem;
+  background: #dcd7cd;
+  border-bottom: 1px solid #bdb7aa;
+}
+
+.path-field {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex: 1 1 14rem;
+  min-width: 12rem;
+  font-weight: 600;
+}
+
+.path-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+}
+
+button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #2f2f2f;
+  border-radius: 3px;
+  background: #2f2f2f;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #444;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.tab {
+  background: #f7f5f0;
+  color: #1c1c1c;
+  border-color: #bdb7aa;
+}
+
+button.tab.active {
+  background: #fff;
+  border-bottom-color: #fff;
+  font-weight: 650;
+}
+
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.35rem 0.5rem 0;
+  background: #dcd7cd;
+  border-bottom: 1px solid #bdb7aa;
+  min-height: 2.2rem;
+}
+
+.editor {
+  width: 100%;
+  height: 100%;
+  min-height: 16rem;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border: 0;
+  resize: none;
+  background: #fff;
+  font: 15px/1.45 "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+  color: inherit;
+}
+
+.editor:disabled {
+  background: #f3f1ec;
+  color: #777;
+}
+
+.find-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.75rem;
+  background: #e2e6e0;
+  border-top: 1px solid #bdb7aa;
+}
+
+.find-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.find-field {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex: 1 1 10rem;
+  min-width: 8rem;
+  font-weight: 600;
+}
+
+.find-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+}
+
+.flag-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+  font-size: 0.92rem;
+  font-family: "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+  color: #3d3d3d;
+  cursor: pointer;
+  user-select: none;
+}
+
+.find-hits {
+  margin: 0;
+  max-height: 8rem;
+  overflow: auto;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #f7f5f0;
+  color: #1c1c1c;
+  font: 13px/1.4 "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+  white-space: pre-wrap;
+}
+
+.intent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.75rem;
+  background: #e6e2d9;
+  border-top: 1px solid #bdb7aa;
+}
+
+.intent-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.intent-field {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  font-weight: 600;
+}
+
+.intent-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+}
+
+.cloud-toggle {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 0.92rem;
+  color: #3d3d3d;
+  cursor: pointer;
+  user-select: none;
+}
+
+.intent-meta {
+  font-size: 0.9rem;
+  color: #3d3d3d;
+}
+
+.outbound-banner {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #8a4b2a;
+  border-radius: 3px;
+  background: #f3e0d4;
+  color: #5a2d14;
+  font-weight: 650;
+  white-space: pre-wrap;
+}
+
+.patch-diff {
+  margin: 0;
+  max-height: 10rem;
+  overflow: auto;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #1e1e1e;
+  color: #d6d6d6;
+  font: 13px/1.4 "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+  white-space: pre-wrap;
+}
+
+.suggestions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.suggestions-bar .suggestion-chip {
+  background: #f7f5f0;
+  color: #1c1c1c;
+  border-color: #8a7f6a;
+  font-weight: 550;
+}
+
+.explanation-panel {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #f7f5f0;
+}
+
+.explanation-summary {
+  margin: 0 0 0.4rem;
+  font-weight: 650;
+}
+
+.explanation-anchors {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.explanation-anchors button {
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  color: #1c1c1c;
+  border-color: #bdb7aa;
+  font-weight: 500;
+}
+
+.explanation-anchors button.invalid {
+  border-color: #8a4b2a;
+  color: #5a2d14;
+  background: #f3e0d4;
+}
+
+.explanation-anchors .anchor-note {
+  display: block;
+  font-size: 0.88rem;
+  color: #555;
+  font-weight: 400;
+}
+
+.status {
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  background: #dcd7cd;
+  border-top: 1px solid #bdb7aa;
+  color: #3d3d3d;
+  min-height: 1.6rem;
+}
