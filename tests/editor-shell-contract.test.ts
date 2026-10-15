@@ -48,7 +48,9 @@ describe("Path open and save", () => {
 
     const shell = new EditorShell();
     const opened = await shell.openPath(path);
-    assert.equal(opened.text, "hello from disk");
+    // Core open omits full text on the snapshot; body via getActiveBuffer for small files.
+    assert.equal(opened.text, undefined);
+    assert.equal(shell.getActiveBuffer().text, "hello from disk");
     assert.equal(shell.getTab(opened.id).path, path);
     assert.equal(shell.getTab(opened.id).untitled, false);
     assert.equal(shell.getTab(opened.id).dirty, false);

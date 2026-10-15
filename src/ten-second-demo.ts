@@ -94,7 +94,7 @@ export function runTenSecondDemo(
 
   shell.editActive(pasteText);
   steps.push("paste");
-  const textBefore = shell.getActiveBuffer().text;
+  const textBefore = shell.getActiveBuffer().text ?? "";
 
   const selection =
     options.selection ??
@@ -134,7 +134,7 @@ export function runTenSecondDemo(
     };
   }
 
-  const textAfter = shell.getActiveBuffer().text;
+  const textAfter = shell.getActiveBuffer().text ?? "";
   const modelPath: "local_preinstalled" | "cloud" | "unavailable" =
     !modelAvailable
       ? "unavailable"

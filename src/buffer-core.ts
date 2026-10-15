@@ -108,28 +108,52 @@ type Binding = {
 
 const require = createRequire(import.meta.url);
 
-function resolveAddon(nativeDir: string): string {
-  const candidates = [
-    join(nativeDir, "nova-buffer-core.win32-x64-msvc.node"),
-    join(nativeDir, "nova-buffer-core.win32-arm64-msvc.node"),
-    join(nativeDir, "nova-buffer-core.darwin-x64.node"),
-    join(nativeDir, "nova-buffer-core.darwin-arm64.node"),
-    join(nativeDir, "nova-buffer-core.linux-x64-gnu.node"),
-    join(nativeDir, "nova-buffer-core.linux-arm64-gnu.node"),
-    join(nativeDir, "nova-buffer-core.node"),
-  ];
-  for (const path of candidates) {
+const ADDON_NAMES = [
+  "nova-buffer-core.win32-x64-msvc.node",
+  "nova-buffer-core.win32-arm64-msvc.node",
+  "nova-buffer-core.darwin-x64.node",
+  "nova-buffer-core.darwin-arm64.node",
+  "nova-buffer-core.linux-x64-gnu.node",
+  "nova-buffer-core.linux-arm64-gnu.node",
+  "nova-buffer-core.node",
+] as const;
+
+function resolveAddonInDir(nativeDir: string): string | null {
+  for (const name of ADDON_NAMES) {
+    const path = join(nativeDir, name);
     if (existsSync(path)) return path;
   }
+  return null;
+}
+
+/** Search dirs: env override, repo/dev (`../native`), packaged beside dist (`../native` from nova-dist). */
+export function nativeAddonSearchDirs(fromModuleDir?: string): string[] {
+  const here =
+    fromModuleDir ?? dirname(fileURLToPath(import.meta.url));
+  const dirs: string[] = [];
+  const envDir = process.env.NOVA_BUFFER_CORE_DIR;
+  if (envDir) dirs.push(envDir);
+  // dist/buffer-core.js → ../native/buffer-core
+  // resources/nova-dist/buffer-core.js → ../native/buffer-core (installer layout)
+  dirs.push(join(here, "..", "native", "buffer-core"));
+  dirs.push(join(here, "native", "buffer-core"));
+  return dirs;
+}
+
+/** Absolute path to the loaded `.node` addon, or throw with search dirs listed. */
+export function resolveNativeAddonPath(fromModuleDir?: string): string {
+  const dirs = nativeAddonSearchDirs(fromModuleDir);
+  for (const dir of dirs) {
+    const hit = resolveAddonInDir(dir);
+    if (hit) return hit;
+  }
   throw new Error(
-    "nova-buffer-core native addon not found; run `npm run build:native` from the repo root",
+    `nova-buffer-core native addon not found; searched: ${dirs.join(", ")}; run \`npm run build:native\` from the repo root`,
   );
 }
 
 function loadBinding(): Binding {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const nativeDir = join(here, "..", "native", "buffer-core");
-  return require(resolveAddon(nativeDir)) as Binding;
+  return require(resolveNativeAddonPath()) as Binding;
 }
 
 const binding = loadBinding();

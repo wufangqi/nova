@@ -134,7 +134,7 @@ export function runActionStageDemo(
 
     // Re-run on a non-empty Selection after reload (may reuse same Buffer).
     shell.editActive(runText);
-    const textBeforeRun = shell.getActiveBuffer().text;
+    const textBeforeRun = shell.getActiveBuffer().text ?? "";
     const selection =
       options.selection ??
       ({ start: 0, end: textBeforeRun.length } satisfies Selection);
@@ -162,7 +162,7 @@ export function runActionStageDemo(
       return fail(steps, started, `accept failed: ${accepted.reason}`);
     }
 
-    const textAfterAccept = shell.getActiveBuffer().text;
+    const textAfterAccept = shell.getActiveBuffer().text ?? "";
     const audit = intent.getProvenanceAudit(shell.activeBufferId!);
     const provenanceSource =
       audit[0]?.originalProvenance.source === "action"

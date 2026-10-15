@@ -38,8 +38,9 @@ describe("Buffer Encoding/EOL + Path round-trip", () => {
 
     const shell = new EditorShell();
     const opened = await shell.openPath(path);
-    // Shell still opts into full text for the transitional desktop Path path.
-    assert.equal(opened.text!.replace(/\r\n/g, "\n"), "你好世界\n第二行");
+    // Non-UTF-8 still decodes in JS; snapshot may carry text from createBuffer path.
+    const body = shell.getActiveBuffer().text ?? opened.text ?? "";
+    assert.equal(body.replace(/\r\n/g, "\n"), "你好世界\n第二行");
     assert.equal(opened.encoding, "gbk");
     assert.equal(opened.eol, "crlf");
     assert.equal(opened.bom, false);
@@ -58,7 +59,7 @@ describe("Buffer Encoding/EOL + Path round-trip", () => {
 
     const shell = new EditorShell();
     const opened = await shell.openPath(path);
-    assert.equal(opened.text, "hello\n");
+    assert.equal(shell.getActiveBuffer().text, "hello\n");
     assert.equal(opened.encoding, "utf-8");
     assert.equal(opened.bom, true);
     assert.equal(opened.eol, "lf");

@@ -7,8 +7,10 @@ import {
   len as coreLen,
   lineCount as coreLineCount,
   lineWindow as coreLineWindow,
+  openPath as coreOpenPath,
   replaceRange as coreReplaceRange,
   rev as coreRev,
+  save as coreSave,
   setText as coreSetText,
   slice as coreSlice,
   undo as coreUndo,
@@ -215,6 +217,34 @@ export class IntentService {
     this.mainHistory.set(id, []);
     this.audit.set(id, []);
     return snapshot(state, snapshotOptions);
+  }
+
+  /**
+   * Open a UTF-8 Path into the Rust core without pulling the body into JS.
+   * Non-UTF-8 Paths must use EditorShell's decode fallback.
+   */
+  openPath(
+    path: string,
+    options: BufferCreateOptions = {},
+    snapshotOptions: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
+    const id = coreOpenPath(path);
+    const state: BufferState = {
+      id,
+      encoding: options.encoding ?? "utf-8",
+      eol: options.eol ?? "lf",
+      bom: options.bom ?? false,
+    };
+    this.buffers.set(id, state);
+    this.mainHistory.set(id, []);
+    this.audit.set(id, []);
+    return snapshot(state, snapshotOptions);
+  }
+
+  /** Persist Buffer via the core (UTF-8 bytes as stored in the rope). */
+  savePath(id: BufferId, path?: string): void {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    coreSave(id, path ?? null);
   }
 
   getBuffer(
