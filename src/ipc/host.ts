@@ -1,8 +1,15 @@
 /**
- * IntentIpcHost — deep IntentService + EditorShell + FindBar behind a small IPC interface.
+ * IntentIpcHost — deep IntentService + EditorShell + FindBar + ActionService
+ * behind a small IPC interface.
  * All Accept writes go through IntentService.accept only (FindBar.replaceAccept included).
  * WUF-86: Explanation anchor resolve + ClipboardSuggestions (default off).
+ * WUF-92: Action methods are pure forwards to ActionService (no host-owned semantics).
  */
+import {
+  ActionService,
+  MemoryActionStore,
+  type ActionStore,
+} from "../action-service.js";
 import { EditorShell } from "../editor-shell.js";
 import { FindBar } from "../find-bar.js";
 import { IntentService } from "../intent-service.js";
@@ -17,6 +24,8 @@ import type {
   ConfirmCloseRequest,
   CreateBufferRequest,
   CreateBufferResult,
+  DeleteActionIpcResult,
+  DeleteActionRequest,
   EditActiveRequest,
   EvokeRequest,
   FindBarParams,
@@ -30,14 +39,20 @@ import type {
   GetSuggestionsEnabledRequest,
   IpcRequest,
   IpcResponse,
+  ListActionsIpcResult,
+  ListActionsRequest,
   ListTabsRequest,
   OpenPathRequest,
   PreviewIntentRequest,
   PreviewIntentResult,
   PreviewReplaceIpcResult,
   PreviewReplaceRequest,
+  PreviewRunIpcResult,
+  PreviewRunRequest,
   RejectPreviewRequest,
   RejectPreviewResult,
+  RenameActionIpcResult,
+  RenameActionRequest,
   ReplaceAcceptIpcResult,
   ReplaceAcceptRequest,
   RequestCloseRequest,
@@ -45,6 +60,8 @@ import type {
   ResolveExplanationAnchorResult,
   SaveActiveAsRequest,
   SaveActiveRequest,
+  SaveFromRegexDraftIpcResult,
+  SaveFromRegexDraftRequest,
   SelectSuggestionRequest,
   SelectSuggestionResult,
   SetCloudEnabledRequest,
@@ -61,17 +78,30 @@ import type {
   UndoRequest,
 } from "./protocol.js";
 
+export interface IntentIpcHostOptions extends IntentServiceOptions {
+  /** Injectable Action persistence (tests: MemoryActionStore / temp FileActionStore). */
+  actionStore?: ActionStore;
+  /** Override Action soft cap (tests). */
+  actionSoftCap?: number;
+}
+
 export class IntentIpcHost {
   readonly service: IntentService;
   readonly shell: EditorShell;
   readonly findBar: FindBar;
   readonly suggestions: ClipboardSuggestions;
+  readonly actions: ActionService;
 
-  constructor(options: IntentServiceOptions = {}) {
+  constructor(options: IntentIpcHostOptions = {}) {
     this.service = new IntentService(options);
     this.shell = new EditorShell(this.service);
     this.findBar = new FindBar(this.service);
     this.suggestions = new ClipboardSuggestions(this.service);
+    this.actions = new ActionService(
+      this.service,
+      options.actionStore ?? new MemoryActionStore(),
+      { softCap: options.actionSoftCap },
+    );
   }
 
   handle(request: CreateBufferRequest): Promise<IpcResponse<CreateBufferResult>>;
@@ -111,6 +141,17 @@ export class IntentIpcHost {
   handle(request: ReplaceAcceptRequest): Promise<IpcResponse<ReplaceAcceptIpcResult>>;
   handle(request: ApplyDraftRequest): Promise<IpcResponse<ApplyDraftIpcResult>>;
   handle(request: GetDraftRequest): Promise<IpcResponse<GetDraftIpcResult>>;
+  handle(
+    request: SaveFromRegexDraftRequest,
+  ): Promise<IpcResponse<SaveFromRegexDraftIpcResult>>;
+  handle(request: ListActionsRequest): Promise<IpcResponse<ListActionsIpcResult>>;
+  handle(
+    request: RenameActionRequest,
+  ): Promise<IpcResponse<RenameActionIpcResult>>;
+  handle(
+    request: DeleteActionRequest,
+  ): Promise<IpcResponse<DeleteActionIpcResult>>;
+  handle(request: PreviewRunRequest): Promise<IpcResponse<PreviewRunIpcResult>>;
   handle(request: IpcRequest): Promise<IpcResponse<unknown>>;
   async handle(request: IpcRequest): Promise<IpcResponse<unknown>> {
     try {
@@ -410,6 +451,56 @@ export class IntentIpcHost {
             ok: true,
             result: { draft: this.findBar.getDraft() } satisfies GetDraftIpcResult,
           };
+        case "save_from_regex_draft":
+          return {
+            ok: true,
+            result: this.actions.saveFromRegexDraft({
+              previewId: request.params.previewId,
+              displayName: request.params.displayName,
+            }) satisfies SaveFromRegexDraftIpcResult,
+          };
+        case "list_actions":
+          return {
+            ok: true,
+            result: {
+              actions: this.actions.list(),
+            } satisfies ListActionsIpcResult,
+          };
+        case "rename_action":
+          return {
+            ok: true,
+            result: this.actions.rename(
+              request.params.id,
+              request.params.displayName,
+            ) satisfies RenameActionIpcResult,
+          };
+        case "delete_action":
+          return {
+            ok: true,
+            result: this.actions.delete(
+              request.params.id,
+            ) satisfies DeleteActionIpcResult,
+          };
+        case "preview_run": {
+          const bufferId =
+            request.params.bufferId ?? this.shell.activeBufferId;
+          if (!bufferId) {
+            return { ok: false, error: "no active Buffer for Action preview_run" };
+          }
+          const run = this.actions.previewRun({
+            actionId: request.params.actionId,
+            bufferId,
+            selection: request.params.selection,
+          });
+          return {
+            ok: true,
+            result: {
+              run,
+              buffer: this.service.getBuffer(bufferId),
+              tabs: this.shell.listTabs(),
+            } satisfies PreviewRunIpcResult,
+          };
+        }
         default: {
           const _exhaustive: never = request;
           return { ok: false, error: `unknown method: ${String(_exhaustive)}` };
