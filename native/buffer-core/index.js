@@ -310,9 +310,12 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { createUntitled, openPath, save, len, rev, slice, lineWindow, dropBuffer } = nativeBinding
+const { createUntitled, createBuffer, setText, bumpRev, openPath, save, len, rev, slice, lineWindow, dropBuffer, applyAccept, undo } = nativeBinding
 
 module.exports.createUntitled = createUntitled
+module.exports.createBuffer = createBuffer
+module.exports.setText = setText
+module.exports.bumpRev = bumpRev
 module.exports.openPath = openPath
 module.exports.save = save
 module.exports.len = len
@@ -320,3 +323,5 @@ module.exports.rev = rev
 module.exports.slice = slice
 module.exports.lineWindow = lineWindow
 module.exports.dropBuffer = dropBuffer
+module.exports.applyAccept = applyAccept
+module.exports.undo = undo

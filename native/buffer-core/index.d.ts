@@ -5,6 +5,12 @@
 
 /** Create an untitled (empty) Buffer. Revision starts at 0. */
 export declare function createUntitled(): string
+/** Create a Buffer with initial text. Revision starts at 0. */
+export declare function createBuffer(text: string): string
+/** Replace entire Buffer text and bump revision (human edit path). */
+export declare function setText(bufferId: string, text: string): number
+/** Bump revision without changing text (metadata-only changes on the JS side). */
+export declare function bumpRev(bufferId: string): number
 /** Open a UTF-8 Path into a new Buffer. Revision starts at 0. */
 export declare function openPath(path: string): string
 /** Save Buffer to Path as UTF-8. Optional path overrides / sets the Buffer path. */
@@ -26,3 +32,27 @@ export interface LineWindow {
 export declare function lineWindow(bufferId: string, lineStart: number, lineCount: number): LineWindow
 /** Drop a Buffer from the core store (test / lifecycle helper). */
 export declare function dropBuffer(bufferId: string): void
+export interface CoreTextEdit {
+  start: number
+  end: number
+  replacement: string
+  before?: string
+  after?: string
+}
+export interface CorePatch {
+  baseRevision: number
+  edits: Array<CoreTextEdit>
+}
+export interface ApplyAcceptResult {
+  ok: boolean
+  reason?: string
+  rev?: number
+  undoGroupId?: string
+}
+/** Apply an Accept batch as one UndoGroup. Revision comes from the core. */
+export declare function applyAccept(bufferId: string, patches: Array<CorePatch>): ApplyAcceptResult
+export interface UndoResult {
+  ok: boolean
+}
+/** Undo one Accept UndoGroup if it is still at Buffer tip. */
+export declare function undo(bufferId: string, undoGroupId: string): UndoResult
