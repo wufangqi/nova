@@ -472,6 +472,19 @@ export class IntentService {
   }
 
   /**
+   * Register a hand-built patches preview (Action preview_run).
+   * Enables IntentService.reject(previewId); Accept still uses accept(patches).
+   */
+  registerPatchesPreview(utterance = ""): PreviewId {
+    const previewId = randomUUID();
+    this.outstandingPreviews.set(previewId, {
+      kind: "patches",
+      utterance,
+    });
+    return previewId;
+  }
+
+  /**
    * Jump target for an Explanation anchor against the current Buffer.
    * Valid ⇒ offsets to jump to. Invalid ⇒ distinguishable; never a wrong jump.
    */
