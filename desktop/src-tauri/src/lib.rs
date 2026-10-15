@@ -251,7 +251,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let bridge = IntentBridge::spawn().map_err(|e| {
+            let resource_dir = app.path().resource_dir().ok();
+            let bridge = IntentBridge::spawn(resource_dir).map_err(|e| {
                 std::io::Error::new(std::io::ErrorKind::Other, e)
             })?;
             app.manage(Mutex::new(bridge));

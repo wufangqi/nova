@@ -15,7 +15,14 @@ pub struct IntentBridge {
 
 pub type SharedBridge = Mutex<IntentBridge>;
 
-fn resolve_host_script() -> Result<PathBuf, String> {
+fn push_if_file(out: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.is_file() {
+        out.push(path);
+    }
+}
+
+/// Resolve `cli-host.js` for packaged installs (resources) and local dev (repo dist/).
+fn resolve_host_script(resource_dir: Option<&Path>) -> Result<PathBuf, String> {
     if let Ok(custom) = std::env::var("NOVA_IPC_HOST") {
         let path = PathBuf::from(custom);
         if path.is_file() {
@@ -24,29 +31,45 @@ fn resolve_host_script() -> Result<PathBuf, String> {
         return Err(format!("NOVA_IPC_HOST not a file: {}", path.display()));
     }
 
-    // desktop/src-tauri → repo root
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .ok_or_else(|| "cannot resolve nova repo root from src-tauri".to_string())?;
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
-    let candidates = [
-        repo_root.join("dist/ipc/cli-host.js"),
-        repo_root.join("src/ipc/cli-host.ts"),
-    ];
-    for path in &candidates {
-        if path.is_file() {
-            return Ok(path.clone());
+    if let Some(dir) = resource_dir {
+        push_if_file(&mut candidates, dir.join("nova-dist/ipc/cli-host.js"));
+        push_if_file(&mut candidates, dir.join("ipc/cli-host.js"));
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            push_if_file(
+                &mut candidates,
+                exe_dir.join("resources/nova-dist/ipc/cli-host.js"),
+            );
+            push_if_file(&mut candidates, exe_dir.join("nova-dist/ipc/cli-host.js"));
         }
     }
-    Err(format!(
-        "Intent IPC host not found under {}. Run `npm run build` in the nova repo root first.",
-        repo_root.display()
-    ))
+
+    // desktop/src-tauri → repo root (dev / `tauri dev`)
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(repo_root) = manifest_dir.parent().and_then(|p| p.parent()) {
+        push_if_file(&mut candidates, repo_root.join("dist/ipc/cli-host.js"));
+        push_if_file(&mut candidates, repo_root.join("src/ipc/cli-host.ts"));
+        push_if_file(
+            &mut candidates,
+            manifest_dir.join("resources/nova-dist/ipc/cli-host.js"),
+        );
+    }
+
+    if let Some(path) = candidates.into_iter().next() {
+        return Ok(path);
+    }
+
+    Err(
+        "Intent IPC host not found. For installers, rebuild with `npm run desktop:build`. For dev, run `npm run build` at the nova repo root."
+            .into(),
+    )
 }
 
-fn node_bin() -> &'static str {
+fn node_bin_name() -> &'static str {
     if cfg!(windows) {
         "node.exe"
     } else {
@@ -62,7 +85,35 @@ fn npx_bin() -> &'static str {
     }
 }
 
-fn node_command_for(host: &Path) -> Result<(String, Vec<String>), String> {
+fn resolve_node_program(resource_dir: Option<&Path>) -> String {
+    let name = node_bin_name();
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(dir) = resource_dir {
+        push_if_file(&mut candidates, dir.join("bin").join(name));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            push_if_file(&mut candidates, exe_dir.join("resources/bin").join(name));
+            push_if_file(&mut candidates, exe_dir.join("bin").join(name));
+        }
+    }
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    push_if_file(
+        &mut candidates,
+        manifest_dir.join("resources/bin").join(name),
+    );
+
+    if let Some(path) = candidates.into_iter().next() {
+        return path.to_string_lossy().into_owned();
+    }
+    name.to_string()
+}
+
+fn node_command_for(
+    host: &Path,
+    resource_dir: Option<&Path>,
+) -> Result<(String, Vec<String>), String> {
     let host_str = host
         .to_str()
         .ok_or_else(|| "host path is not valid UTF-8".to_string())?
@@ -71,19 +122,29 @@ fn node_command_for(host: &Path) -> Result<(String, Vec<String>), String> {
         // Dev fallback: tsx runs TypeScript without a prior build.
         Ok((npx_bin().into(), vec!["tsx".into(), host_str]))
     } else {
-        Ok((node_bin().into(), vec![host_str]))
+        Ok((resolve_node_program(resource_dir), vec![host_str]))
     }
 }
 
 impl IntentBridge {
-    pub fn spawn() -> Result<Self, String> {
-        let host = resolve_host_script()?;
-        let (program, args) = node_command_for(&host)?;
-        let mut child = Command::new(&program)
-            .args(&args)
+    pub fn spawn(resource_dir: Option<PathBuf>) -> Result<Self, String> {
+        let resource = resource_dir.as_deref();
+        let host = resolve_host_script(resource)?;
+        let (program, args) = node_command_for(&host, resource)?;
+        let mut cmd = Command::new(&program);
+        cmd.args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        // Help Node treat shipped JS as ESM via nova-dist/package.json.
+        if let Some(dist_root) = host
+            .parent()
+            .and_then(|ipc| ipc.parent())
+            .filter(|p| p.join("package.json").is_file())
+        {
+            cmd.current_dir(dist_root);
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn Intent IPC host ({program}): {e}"))?;
 

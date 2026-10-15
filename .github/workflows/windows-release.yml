@@ -1,0 +1,133 @@
+# Build Windows MSI/NSIS and publish to GitHub Releases.
+# Trigger: push tag v*  OR  Actions → Run workflow (optional tag).
+
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/update (e.g. v0.1.0). Empty = upload artifacts only."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Install npm dependencies
+        run: |
+          npm ci
+          npm --prefix desktop ci
+
+      - name: Build TypeScript core
+        run: npm run build
+
+      - name: Prepare Tauri resources (IPC dist)
+        run: node scripts/prepare-tauri-resources.mjs
+
+      - name: Bundle portable Node for the installer
+        shell: pwsh
+        run: |
+          $ver = "v22.14.0"
+          $zip = "node-$ver-win-x64.zip"
+          $url = "https://nodejs.org/dist/$ver/$zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath node-portable -Force
+          $dest = "desktop/src-tauri/resources/bin"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item "node-portable/node-$ver-win-x64/node.exe" "$dest/node.exe"
+          Write-Host "bundled $dest/node.exe"
+
+      - name: Build Tauri (MSI + NSIS)
+        working-directory: desktop
+        run: npm run tauri build
+
+      - name: Locate installers
+        id: artifacts
+        shell: pwsh
+        run: |
+          $bundle = "desktop/src-tauri/target/release/bundle"
+          Get-ChildItem -Recurse $bundle | Select-Object FullName
+          $msi = Get-ChildItem -Path "$bundle/msi" -Filter *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          $nsis = Get-ChildItem -Path "$bundle/nsis" -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $msi -and -not $nsis) { throw "No MSI/NSIS found under $bundle" }
+          if ($msi) { "msi=$($msi.FullName)" >> $env:GITHUB_OUTPUT; "msi_name=$($msi.Name)" >> $env:GITHUB_OUTPUT }
+          if ($nsis) { "nsis=$($nsis.FullName)" >> $env:GITHUB_OUTPUT; "nsis_name=$($nsis.Name)" >> $env:GITHUB_OUTPUT }
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-windows-installers
+          path: |
+            desktop/src-tauri/target/release/bundle/msi/*.msi
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub Release
+        if: steps.tag.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: Nova ${{ steps.tag.outputs.name }}
+          body: |
+            Windows installers for Nova desktop (Tauri shell).
+
+            - **NSIS** (`.exe`) — recommended for most users
+            - **MSI** — enterprise / silent install
+
+            Requires Windows 10+. WebView2 is bootstrapped if missing.
+            The installer bundles a portable Node runtime for the Intent IPC host.
+            Offline AI still needs a separately installed local model (optional).
+
+            Docs: see repository `README.md` / `desktop/README.md`.
+          files: |
+            desktop/src-tauri/target/release/bundle/msi/*.msi
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
+          draft: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
