@@ -12,6 +12,7 @@ import {
 } from "../src/buffer-core.js";
 import { FindBar } from "../src/find-bar.js";
 import { IntentService } from "../src/intent-service.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 function pollUntilTerminal(jobId: string, maxIters = 10_000) {
   for (let i = 0; i < maxIters; i++) {
@@ -90,15 +91,15 @@ describe("FindBar → core Find; replace still Accept", () => {
     });
     assert.equal(preview.ok, true);
     if (!preview.ok) return;
-    assert.equal(intent.getBuffer(buf.id).text, "cat dog cat");
+    assert.equal(bufferBody(intent, buf.id), "cat dog cat");
 
     const accepted = intent.accept(preview.patches);
     assert.equal(accepted.ok, true);
     if (!accepted.ok) return;
-    assert.equal(intent.getBuffer(buf.id).text, "owl dog owl");
+    assert.equal(bufferBody(intent, buf.id), "owl dog owl");
 
     intent.undo(accepted.undoGroupId);
-    assert.equal(intent.getBuffer(buf.id).text, "cat dog cat");
+    assert.equal(bufferBody(intent, buf.id), "cat dog cat");
   });
 
   it("capture-group replace still goes through Accept", () => {
@@ -113,6 +114,6 @@ describe("FindBar → core Find; replace still Accept", () => {
       scope: { kind: "range", start: 0, end: 5 },
     });
     assert.equal(result.ok, true);
-    assert.equal(intent.getBuffer(buf.id).text, "b1 b2 a3");
+    assert.equal(bufferBody(intent, buf.id), "b1 b2 a3");
   });
 });

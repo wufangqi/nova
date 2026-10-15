@@ -33,9 +33,12 @@ export class MojibakeRepair {
 
   preview(input: MojibakePreviewInput): MojibakeProposal {
     const buf = this.intent.getBuffer(input.bufferId);
+    const len = this.intent.len(input.bufferId);
+    // Repair rewrites the whole Buffer — pull via slice, not a default snapshot.
+    const currentText = this.intent.slice(input.bufferId, 0, len);
     const fromEncoding = input.fromEncoding ?? buf.encoding;
     const repairedText = reinterpretText(
-      buf.text,
+      currentText,
       fromEncoding,
       input.assumedEncoding,
     );
@@ -46,7 +49,7 @@ export class MojibakeRepair {
       edits: [
         {
           start: 0,
-          end: buf.text.length,
+          end: len,
           replacement: repairedText,
           before: "",
           after: "",

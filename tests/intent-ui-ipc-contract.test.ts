@@ -1,11 +1,30 @@
 /**
- * WUF-84 contract: Intent bar → preview → Patch diff / Cost / Outbound → Accept|reject|Undo.
+ * WUF-84/99 contract: Intent bar → preview → Patch diff / Cost / Outbound → Accept|reject|Undo.
  * Seam: IntentIpcHost Intent methods (thin facade over IntentService).
+ * Default IPC Buffer snapshots omit full text — verify via slice.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { IntentIpcHost } from "../src/ipc/host.js";
 import { formatPatchDiff } from "../src/ipc/patch-diff.js";
+
+async function sliceAll(
+  host: IntentIpcHost,
+  id: string,
+): Promise<string> {
+  const len = await host.handle({ method: "buffer_len", params: { id } });
+  assert.equal(len.ok, true);
+  if (!len.ok) return "";
+  const n = len.result.len;
+  if (n === 0) return "";
+  const sliced = await host.handle({
+    method: "slice",
+    params: { id, start: 0, end: n },
+  });
+  assert.equal(sliced.ok, true);
+  if (!sliced.ok) return "";
+  return sliced.result.text;
+}
 
 describe("IPC Intent preview", () => {
   it("parses an utterance on the active Buffer and returns a Patch preview", async () => {
@@ -33,7 +52,11 @@ describe("IPC Intent preview", () => {
     if (previewed.result.preview.kind !== "patches") return;
     assert.ok(previewed.result.preview.patches.length >= 1);
     assert.equal(previewed.result.intent.utterance, "uppercase");
-    assert.equal(previewed.result.buffer.text, "hello world");
+    assert.equal(previewed.result.buffer.text, undefined);
+    assert.equal(
+      await sliceAll(host, previewed.result.buffer.id),
+      "hello world",
+    );
   });
 });
 
@@ -66,7 +89,8 @@ describe("IPC Patch diff and Cost", () => {
     assert.equal(typeof cost.tokensEstimate, "number");
     assert.equal(typeof cost.hasOutbound, "boolean");
 
-    const diff = formatPatchDiff(previewed.result.buffer.text, patches);
+    const body = await sliceAll(host, previewed.result.buffer.id);
+    const diff = formatPatchDiff(body, patches);
     assert.match(diff, /^-hello/m);
     assert.match(diff, /^\+HELLO/m);
   });
@@ -118,6 +142,7 @@ describe("IPC Accept / reject / UndoGroup", () => {
     const evoked = await host.handle({ method: "evoke", params: {} });
     assert.equal(evoked.ok, true);
     if (!evoked.ok) return;
+    const bufferId = evoked.result.buffer.id;
 
     await host.handle({
       method: "edit_active",
@@ -142,13 +167,7 @@ describe("IPC Accept / reject / UndoGroup", () => {
     });
     assert.equal(rejected.ok, true);
 
-    const afterReject = await host.handle({
-      method: "get_buffer",
-      params: { id: evoked.result.buffer.id, includeText: true },
-    });
-    assert.equal(afterReject.ok, true);
-    if (!afterReject.ok) return;
-    assert.equal(afterReject.result.text, "hello world");
+    assert.equal(await sliceAll(host, bufferId), "hello world");
 
     const previewed = await host.handle({
       method: "preview_intent",
@@ -171,13 +190,7 @@ describe("IPC Accept / reject / UndoGroup", () => {
     assert.equal(accepted.result.accept.ok, true);
     if (!accepted.result.accept.ok) return;
     assert.equal(accepted.result.buffers[0]!.text, undefined);
-    const afterAccept = await host.handle({
-      method: "slice",
-      params: { id: evoked.result.buffer.id, start: 0, end: 11 },
-    });
-    assert.equal(afterAccept.ok, true);
-    if (!afterAccept.ok) return;
-    assert.equal(afterAccept.result.text, "HELLO world");
+    assert.equal(await sliceAll(host, bufferId), "HELLO world");
 
     const undone = await host.handle({
       method: "undo",
@@ -186,12 +199,6 @@ describe("IPC Accept / reject / UndoGroup", () => {
     assert.equal(undone.ok, true);
     if (!undone.ok) return;
     assert.equal(undone.result.buffer.text, undefined);
-    const restored = await host.handle({
-      method: "slice",
-      params: { id: undone.result.buffer.id, start: 0, end: 11 },
-    });
-    assert.equal(restored.ok, true);
-    if (!restored.ok) return;
-    assert.equal(restored.result.text, "hello world");
+    assert.equal(await sliceAll(host, bufferId), "hello world");
   });
 });

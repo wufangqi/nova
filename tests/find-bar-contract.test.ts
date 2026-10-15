@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { FindBar } from "../src/find-bar.js";
 import { IntentService } from "../src/intent-service.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 describe("FindBar core regex find (hit feedback)", () => {
   it("returns ordered hits with count, offsets, and line", () => {
@@ -94,11 +95,11 @@ describe("replace over Scope → Patch → Accept", () => {
     assert.equal(preview.patches.length, 1);
     assert.equal(preview.patches[0]!.provenance.source, "findbar");
     // Buffer unchanged until Accept.
-    assert.equal(intent.getBuffer(buf.id).text, "red fox red hen");
+    assert.equal(bufferBody(intent, buf.id), "red fox red hen");
 
     const accepted = intent.accept(preview.patches);
     assert.equal(accepted.ok, true);
-    assert.equal(intent.getBuffer(buf.id).text, "blue fox blue hen");
+    assert.equal(bufferBody(intent, buf.id), "blue fox blue hen");
   });
 
   it("replaceAccept is a single call that Accepts FindBar Patches", () => {
@@ -115,7 +116,7 @@ describe("replace over Scope → Patch → Accept", () => {
 
     assert.equal(result.ok, true);
     // Only "a1 a2" is in Scope; trailing " a3" untouched.
-    assert.equal(intent.getBuffer(buf.id).text, "b1 b2 a3");
+    assert.equal(bufferBody(intent, buf.id), "b1 b2 a3");
   });
 });
 
@@ -132,10 +133,10 @@ describe("UndoGroup after FindBar Accept", () => {
     });
     assert.equal(result.ok, true);
     if (!result.ok) return;
-    assert.equal(intent.getBuffer(buf.id).text, "owl dog owl");
+    assert.equal(bufferBody(intent, buf.id), "owl dog owl");
 
     intent.undo(result.undoGroupId);
-    assert.equal(intent.getBuffer(buf.id).text, "cat dog cat");
+    assert.equal(bufferBody(intent, buf.id), "cat dog cat");
   });
 });
 
@@ -162,6 +163,6 @@ describe("FindBar works without chat / Intent", () => {
       replacement: "nova",
     });
     assert.equal(result.ok, true);
-    assert.equal(intent.getBuffer(buf.id).text, "hello nova");
+    assert.equal(bufferBody(intent, buf.id), "hello nova");
   });
 });

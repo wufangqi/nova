@@ -4,6 +4,13 @@ import { decodeBytes, encodeText } from "./encoding.js";
 import { IntentService } from "./intent-service.js";
 import type { BufferId, BufferSnapshot } from "./types.js";
 
+/**
+ * Desktop textarea path still needs the whole body in JS until WUF-101
+ * virtualizes the editor. Call sites here opt in explicitly — never rely on
+ * IntentService defaulting to full text.
+ */
+const SHELL_FULL_TEXT = { includeText: true } as const;
+
 export interface TabInfo {
   bufferId: BufferId;
   title: string;
@@ -52,7 +59,7 @@ export class EditorShell {
 
   /** Global hotkey handler: always spawn a new untitled Buffer; keep existing tabs. */
   evokeNewUntitled(): BufferSnapshot {
-    const buf = this.intent.createBuffer("");
+    const buf = this.intent.createBuffer("", {}, SHELL_FULL_TEXT);
     this.tabs.set(buf.id, {
       bufferId: buf.id,
       path: null,
@@ -82,7 +89,7 @@ export class EditorShell {
 
   getActiveBuffer(): BufferSnapshot {
     if (!this.activeId) throw new Error("no active Buffer");
-    return this.intent.getBuffer(this.activeId);
+    return this.intent.getBuffer(this.activeId, SHELL_FULL_TEXT);
   }
 
   activateTab(bufferId: BufferId): void {
@@ -92,7 +99,7 @@ export class EditorShell {
 
   editActive(text: string): BufferSnapshot {
     if (!this.activeId) throw new Error("no active Buffer");
-    return this.intent.editBuffer(this.activeId, text);
+    return this.intent.editBuffer(this.activeId, text, SHELL_FULL_TEXT);
   }
 
   /** Span edit on the active Buffer (virtual-scroll / large-file typing path). */
@@ -107,21 +114,25 @@ export class EditorShell {
 
   editBuffer(bufferId: BufferId, text: string): BufferSnapshot {
     this.requireTab(bufferId);
-    return this.intent.editBuffer(bufferId, text);
+    return this.intent.editBuffer(bufferId, text, SHELL_FULL_TEXT);
   }
 
   async openPath(path: string): Promise<BufferSnapshot> {
     const bytes = await readFile(path);
     const decoded = decodeBytes(bytes);
-    const buf = this.intent.createBuffer(decoded.text, {
-      encoding: decoded.encoding,
-      eol: decoded.eol,
-      bom: decoded.bom,
-    });
+    const buf = this.intent.createBuffer(
+      decoded.text,
+      {
+        encoding: decoded.encoding,
+        eol: decoded.eol,
+        bom: decoded.bom,
+      },
+      SHELL_FULL_TEXT,
+    );
     this.tabs.set(buf.id, {
       bufferId: buf.id,
       path,
-      savedText: buf.text,
+      savedText: buf.text ?? decoded.text,
       savedEncoding: buf.encoding,
       savedEol: buf.eol,
       savedBom: buf.bom,
@@ -186,8 +197,9 @@ export class EditorShell {
     bufferId: BufferId,
     path: string,
   ): Promise<void> {
-    const buf = this.intent.getBuffer(bufferId);
-    const bytes = encodeText(buf.text, buf.encoding, buf.eol, {
+    // Explicit full-text opt-in for Path IO until core-owned save lands for shell.
+    const buf = this.intent.getBuffer(bufferId, SHELL_FULL_TEXT);
+    const bytes = encodeText(buf.text ?? "", buf.encoding, buf.eol, {
       bom: buf.bom,
     });
     await writeFile(path, bytes);
@@ -195,8 +207,8 @@ export class EditorShell {
 
   private markSaved(bufferId: BufferId): void {
     const tab = this.requireTab(bufferId);
-    const buf = this.intent.getBuffer(bufferId);
-    tab.savedText = buf.text;
+    const buf = this.intent.getBuffer(bufferId, SHELL_FULL_TEXT);
+    tab.savedText = buf.text ?? "";
     tab.savedEncoding = buf.encoding;
     tab.savedEol = buf.eol;
     tab.savedBom = buf.bom;
@@ -204,9 +216,9 @@ export class EditorShell {
 
   private isDirty(bufferId: BufferId): boolean {
     const tab = this.requireTab(bufferId);
-    const buf = this.intent.getBuffer(bufferId);
+    const buf = this.intent.getBuffer(bufferId, SHELL_FULL_TEXT);
     return (
-      buf.text !== tab.savedText ||
+      (buf.text ?? "") !== tab.savedText ||
       buf.encoding !== tab.savedEncoding ||
       buf.eol !== tab.savedEol ||
       buf.bom !== tab.savedBom

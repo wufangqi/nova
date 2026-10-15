@@ -1,9 +1,12 @@
 /**
- * WUF-81/82/84/85/86/92/98/101 — Tauri IPC request/response shapes.
+ * WUF-81/82/84/85/86/92/98/99/101 — Tauri IPC request/response shapes.
  * Thin facade over IntentService + EditorShell + FindBar + ActionService;
- * no alternate Accept path. WUF-98/101: slice / line_window / len / rev /
- * line_count; BufferSnapshot.text omitted by default (incl. shell methods).
- * edit_active accepts full text (legacy) or span { start, end, replacement }.
+ * no alternate Accept path. WUF-98/99/101: slice / line_window / len / rev /
+ * line_count; BufferSnapshot.text omitted by default on get_buffer /
+ * create_buffer / accept, Intent / FindBar / Action / Undo / Explanation /
+ * Suggestion, and shell methods. Opt in via includeText: true on
+ * get_buffer / create_buffer. edit_active accepts full text (legacy) or
+ * span { start, end, replacement }.
  */
 import type {
   AcceptResult,

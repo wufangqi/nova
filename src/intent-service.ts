@@ -34,6 +34,7 @@ import type {
   BufferCreateOptions,
   BufferId,
   BufferSnapshot,
+  BufferSnapshotOptions,
   Cost,
   Eol,
   ExplanationAnchor,
@@ -84,15 +85,25 @@ function bufferText(id: BufferId): string {
   return n === 0 ? "" : coreSlice(id, 0, n);
 }
 
-function snapshot(b: BufferState): BufferSnapshot {
-  return {
+/**
+ * Meta snapshot. Full `text` only when `includeText` — never the silent default
+ * (pulling whole Buffer into JS is an explicit opt-in; prefer slice/lineWindow).
+ */
+function snapshot(
+  b: BufferState,
+  options: BufferSnapshotOptions = {},
+): BufferSnapshot {
+  const snap: BufferSnapshot = {
     id: b.id,
-    text: bufferText(b.id),
     revision: coreRev(b.id),
     encoding: b.encoding,
     eol: b.eol,
     bom: b.bom,
   };
+  if (options.includeText === true) {
+    snap.text = bufferText(b.id);
+  }
+  return snap;
 }
 
 function clampRange(
@@ -188,7 +199,11 @@ export class IntentService {
     return this.cloudEnabled;
   }
 
-  createBuffer(text = "", options: BufferCreateOptions = {}): BufferSnapshot {
+  createBuffer(
+    text = "",
+    options: BufferCreateOptions = {},
+    snapshotOptions: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
     const id = coreCreateBuffer(text);
     const state: BufferState = {
       id,
@@ -199,13 +214,16 @@ export class IntentService {
     this.buffers.set(id, state);
     this.mainHistory.set(id, []);
     this.audit.set(id, []);
-    return snapshot(state);
+    return snapshot(state, snapshotOptions);
   }
 
-  getBuffer(id: BufferId): BufferSnapshot {
+  getBuffer(
+    id: BufferId,
+    options: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
-    return snapshot(b);
+    return snapshot(b, options);
   }
 
   /** Core-equivalent slice — does not require holding full Buffer text in JS. */
@@ -240,11 +258,15 @@ export class IntentService {
   }
 
   /** Direct human edit of logical text (not a Patch Accept). */
-  editBuffer(id: BufferId, text: string): BufferSnapshot {
+  editBuffer(
+    id: BufferId,
+    text: string,
+    options: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
     coreSetText(id, text);
-    return snapshot(b);
+    return snapshot(b, options);
   }
 
   /**
@@ -270,6 +292,7 @@ export class IntentService {
   setBufferMeta(
     id: BufferId,
     meta: { encoding?: string; eol?: Eol; bom?: boolean },
+    options: BufferSnapshotOptions = {},
   ): BufferSnapshot {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
@@ -277,7 +300,7 @@ export class IntentService {
     if (meta.eol !== undefined) b.eol = meta.eol;
     if (meta.bom !== undefined) b.bom = meta.bom;
     bumpRev(id);
-    return snapshot(b);
+    return snapshot(b, options);
   }
 
   /**

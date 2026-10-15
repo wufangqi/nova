@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { FindBar } from "../src/find-bar.js";
 import { IntentService } from "../src/intent-service.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 describe("NL → RegexDraft fills FindBar", () => {
   it("NL→regex Intent produces RegexDraft and populates FindBar", () => {
@@ -17,7 +18,7 @@ describe("NL → RegexDraft fills FindBar", () => {
     const intent = svc.parse({
       bufferId: buf.id,
       utterance: "regex a(\\d)",
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(svc, buf.id).length },
     });
     const preview = svc.preview(intent);
 
@@ -92,7 +93,7 @@ describe("RegexDraft does not mutate Buffer", () => {
     bar.applyDraft(preview.draft);
     svc.reject(preview.previewId);
 
-    assert.equal(svc.getBuffer(buf.id).text, original);
+    assert.equal(bufferBody(svc, buf.id), original);
     assert.equal(svc.getBuffer(buf.id).revision, buf.revision);
     assert.equal(svc.getMainHistory(buf.id).length, 0);
   });
@@ -107,7 +108,7 @@ describe("explicit replace over Scope then Accept", () => {
     const intent = svc.parse({
       bufferId: buf.id,
       utterance: "regex red",
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(svc, buf.id).length },
     });
     const preview = svc.preview(intent);
     assert.equal(preview.kind, "regex_draft");
@@ -115,7 +116,7 @@ describe("explicit replace over Scope then Accept", () => {
 
     bar.applyDraft({ ...preview.draft, replacement: "blue" });
     // Still no write — draft + FindBar fill only.
-    assert.equal(svc.getBuffer(buf.id).text, "red fox red hen");
+    assert.equal(bufferBody(svc, buf.id), "red fox red hen");
 
     // User may refine the pattern before replace.
     bar.setPattern("red");
@@ -128,11 +129,11 @@ describe("explicit replace over Scope then Accept", () => {
     assert.equal(replacePreview.ok, true);
     if (!replacePreview.ok) return;
     assert.equal(replacePreview.patches[0]!.provenance.source, "findbar");
-    assert.equal(svc.getBuffer(buf.id).text, "red fox red hen");
+    assert.equal(bufferBody(svc, buf.id), "red fox red hen");
 
     const accepted = svc.accept(replacePreview.patches);
     assert.equal(accepted.ok, true);
-    assert.equal(svc.getBuffer(buf.id).text, "blue fox blue hen");
+    assert.equal(bufferBody(svc, buf.id), "blue fox blue hen");
   });
 
   it("replaceAccept from loaded draft writes via IntentService Accept", () => {
@@ -147,7 +148,7 @@ describe("explicit replace over Scope then Accept", () => {
     });
 
     assert.equal(result.ok, true);
-    assert.equal(svc.getBuffer(buf.id).text, "b1 b2 a3");
+    assert.equal(bufferBody(svc, buf.id), "b1 b2 a3");
   });
 });
 

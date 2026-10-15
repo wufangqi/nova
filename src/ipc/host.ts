@@ -4,8 +4,9 @@
  * All Accept writes go through IntentService.accept only (FindBar.replaceAccept included).
  * WUF-86: Explanation anchor resolve + ClipboardSuggestions (default off).
  * WUF-92: Action methods are pure forwards to ActionService (no host-owned semantics).
- * WUF-98/101: slice / line_window / buffer_len / buffer_rev / buffer_line_count;
- * snapshots omit text by default (shell methods included for virtual scroll).
+ * WUF-98/99/101: slice / line_window / buffer_len / buffer_rev / buffer_line_count;
+ * snapshots omit text by default (Intent / FindBar / Action / shell / Undo).
+ * Opt in only via includeText: true on get_buffer / create_buffer.
  */
 import type { BufferSnapshot } from "../types.js";
 import {
@@ -193,7 +194,9 @@ export class IntentIpcHost {
       switch (request.method) {
         case "create_buffer": {
           const { text = "", includeText = false, ...options } = request.params;
-          const snap = this.service.createBuffer(text, options);
+          const snap = this.service.createBuffer(text, options, {
+            includeText,
+          });
           return {
             ok: true,
             result: toIpcSnapshot(snap, includeText),
@@ -203,7 +206,9 @@ export class IntentIpcHost {
           return {
             ok: true,
             result: toIpcSnapshot(
-              this.service.getBuffer(request.params.id),
+              this.service.getBuffer(request.params.id, {
+                includeText: request.params.includeText === true,
+              }),
               request.params.includeText === true,
             ),
           };
@@ -378,7 +383,7 @@ export class IntentIpcHost {
             result: {
               intent,
               preview,
-              buffer: this.service.getBuffer(bufferId),
+              buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
             } satisfies PreviewIntentResult,
           };
@@ -392,10 +397,14 @@ export class IntentIpcHost {
         }
         case "undo": {
           this.service.undo(request.params.undoGroupId);
+          const id = this.shell.activeBufferId;
+          if (!id) {
+            return { ok: false, error: "no active Buffer for Undo" };
+          }
           return {
             ok: true,
             result: {
-              buffer: toIpcSnapshot(this.shell.getActiveBuffer(), false),
+              buffer: toIpcSnapshot(this.service.getBuffer(id), false),
               tabs: this.shell.listTabs(),
             } satisfies UndoIpcResult,
           };
@@ -426,7 +435,7 @@ export class IntentIpcHost {
             ok: true,
             result: {
               resolve,
-              buffer: this.service.getBuffer(bufferId),
+              buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
             } satisfies ResolveExplanationAnchorResult,
           };
@@ -474,7 +483,7 @@ export class IntentIpcHost {
             ok: true,
             result: {
               preview,
-              buffer: this.service.getBuffer(bufferId),
+              buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
               utterance: request.params.suggestion.utterance,
             } satisfies SelectSuggestionResult,
@@ -496,7 +505,7 @@ export class IntentIpcHost {
             result: {
               hits: found.hits,
               count: found.count,
-              buffer: this.service.getBuffer(bufferId),
+              buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
             } satisfies FindIpcResult,
           };
@@ -517,7 +526,7 @@ export class IntentIpcHost {
             ok: true,
             result: {
               preview,
-              buffer: this.service.getBuffer(bufferId),
+              buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
             } satisfies PreviewReplaceIpcResult,
           };
@@ -538,7 +547,7 @@ export class IntentIpcHost {
             ok: true,
             result: {
               accept,
-              buffer: this.service.getBuffer(bufferId),
+              buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
             } satisfies ReplaceAcceptIpcResult,
           };
@@ -553,7 +562,7 @@ export class IntentIpcHost {
             ok: true,
             result: {
               draft: this.findBar.getDraft(),
-              buffer: this.service.getBuffer(id),
+              buffer: toIpcSnapshot(this.service.getBuffer(id)),
               tabs: this.shell.listTabs(),
             } satisfies ApplyDraftIpcResult,
           };
@@ -608,7 +617,7 @@ export class IntentIpcHost {
             ok: true,
             result: {
               run,
-              buffer: this.service.getBuffer(bufferId),
+              buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
             } satisfies PreviewRunIpcResult,
           };
