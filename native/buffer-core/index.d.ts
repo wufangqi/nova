@@ -9,6 +9,14 @@ export declare function createUntitled(): string
 export declare function createBuffer(text: string): string
 /** Replace entire Buffer text and bump revision (human edit path). */
 export declare function setText(bufferId: string, text: string): number
+/**
+ * Replace a character range `[start, end)` and bump revision (human edit path).
+ * Not an Accept UndoGroup — typing / paste go through this seam.
+ */
+export declare function replaceRange(bufferId: string, start: number, end: number, replacement: string): number
+/** Number of lines in the Buffer (ropey line count; trailing `
+` adds an empty line). */
+export declare function lineCount(bufferId: string): number
 /** Bump revision without changing text (metadata-only changes on the JS side). */
 export declare function bumpRev(bufferId: string): number
 /** Open a UTF-8 Path into a new Buffer. Revision starts at 0. */

@@ -69,11 +69,18 @@ type Binding = {
   createUntitled(): string;
   createBuffer(text: string): string;
   setText(bufferId: string, text: string): number;
+  replaceRange(
+    bufferId: string,
+    start: number,
+    end: number,
+    replacement: string,
+  ): number;
   bumpRev(bufferId: string): number;
   openPath(path: string): string;
   save(bufferId: string, path?: string | null): void;
   len(bufferId: string): number;
   rev(bufferId: string): number;
+  lineCount(bufferId: string): number;
   slice(bufferId: string, start: number, end: number): string;
   lineWindow(
     bufferId: string,
@@ -130,11 +137,13 @@ const binding = loadBinding();
 export const createUntitled = binding.createUntitled.bind(binding);
 export const createBuffer = binding.createBuffer.bind(binding);
 export const setText = binding.setText.bind(binding);
+export const replaceRange = binding.replaceRange.bind(binding);
 export const bumpRev = binding.bumpRev.bind(binding);
 export const openPath = binding.openPath.bind(binding);
 export const save = binding.save.bind(binding);
 export const len = binding.len.bind(binding);
 export const rev = binding.rev.bind(binding);
+export const lineCount = binding.lineCount.bind(binding);
 export const slice = binding.slice.bind(binding);
 export const lineWindow = binding.lineWindow.bind(binding);
 export const dropBuffer = binding.dropBuffer.bind(binding);

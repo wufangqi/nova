@@ -4,8 +4,10 @@ export {
   save as saveBufferCore,
   len as bufferCoreLen,
   rev as bufferCoreRev,
+  lineCount as bufferCoreLineCount,
   slice as bufferCoreSlice,
   lineWindow as bufferCoreLineWindow,
+  replaceRange as bufferCoreReplaceRange,
   dropBuffer,
 } from "./buffer-core.js";
 export type { LineWindow } from "./buffer-core.js";

@@ -51,7 +51,15 @@ describe("IPC logical text edit", () => {
     });
     assert.equal(edited.ok, true);
     if (!edited.ok) return;
-    assert.equal(edited.result.buffer.text, "hello nova");
+    // Shell snapshots omit full text (WUF-101 virtual scroll).
+    assert.equal(edited.result.buffer.text, undefined);
+    const slice = await host.handle({
+      method: "slice",
+      params: { id: edited.result.buffer.id, start: 0, end: 10 },
+    });
+    assert.equal(slice.ok, true);
+    if (!slice.ok) return;
+    assert.equal(slice.result.text, "hello nova");
     assert.equal(edited.result.tabs[0]!.dirty, true);
     assert.match(edited.result.tabs[0]!.title, /\*$/);
   });
@@ -70,7 +78,14 @@ describe("IPC Path open and save", () => {
     });
     assert.equal(opened.ok, true);
     if (!opened.ok) return;
-    assert.equal(opened.result.buffer.text, "disk text");
+    assert.equal(opened.result.buffer.text, undefined);
+    const openedSlice = await host.handle({
+      method: "slice",
+      params: { id: opened.result.buffer.id, start: 0, end: 9 },
+    });
+    assert.equal(openedSlice.ok, true);
+    if (!openedSlice.ok) return;
+    assert.equal(openedSlice.result.text, "disk text");
     assert.equal(opened.result.tabs[0]!.path, path);
     assert.equal(opened.result.tabs[0]!.dirty, false);
 

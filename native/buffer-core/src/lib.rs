@@ -99,6 +99,41 @@ pub fn set_text(buffer_id: String, text: String) -> Result<u32> {
   })
 }
 
+/// Replace a character range `[start, end)` and bump revision (human edit path).
+/// Not an Accept UndoGroup — typing / paste go through this seam.
+#[napi]
+pub fn replace_range(
+  buffer_id: String,
+  start: u32,
+  end: u32,
+  replacement: String,
+) -> Result<u32> {
+  with_buffer_mut(&buffer_id, |entry| {
+    let len = entry.rope.len_chars();
+    let start = start as usize;
+    let end = end as usize;
+    if start > end || end > len {
+      return Err(Error::from_reason(format!(
+        "replace_range out of range: start={start} end={end} len={len}"
+      )));
+    }
+    if start != end {
+      entry.rope.remove(start..end);
+    }
+    if !replacement.is_empty() {
+      entry.rope.insert(start, &replacement);
+    }
+    entry.rev = entry.rev.saturating_add(1);
+    Ok(entry.rev)
+  })
+}
+
+/// Number of lines in the Buffer (ropey line count; trailing `\n` adds an empty line).
+#[napi]
+pub fn line_count(buffer_id: String) -> Result<u32> {
+  with_buffer(&buffer_id, |entry| Ok(entry.rope.len_lines() as u32))
+}
+
 /// Bump revision without changing text (metadata-only changes on the JS side).
 #[napi]
 pub fn bump_rev(buffer_id: String) -> Result<u32> {

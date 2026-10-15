@@ -1,8 +1,8 @@
 mod intent_bridge;
 
 use intent_bridge::{
-    accept, activate_tab, apply_draft, buffer_len, buffer_rev, confirm_close, create_buffer,
-    delete_action, edit_active, evoke, find, get_buffer, get_draft, get_shell_state,
+    accept, activate_tab, apply_draft, buffer_len, buffer_line_count, buffer_rev, confirm_close,
+    create_buffer, delete_action, edit_active, evoke, find, get_buffer, get_draft, get_shell_state,
     get_suggestions_enabled, line_window, list_actions, list_tabs, open_path, preview_intent,
     preview_replace, preview_run, reject_preview, rename_action, replace_accept, request_close,
     resolve_explanation_anchor, save_active, save_active_as, save_from_regex_draft,
@@ -73,6 +73,14 @@ fn buffer_rev_cmd(
 }
 
 #[tauri::command]
+fn buffer_line_count_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    buffer_line_count(&bridge, id)
+}
+
+#[tauri::command]
 fn accept_cmd(
     bridge: tauri::State<'_, SharedBridge>,
     patches: Value,
@@ -101,9 +109,12 @@ fn activate_tab_cmd(
 #[tauri::command]
 fn edit_active_cmd(
     bridge: tauri::State<'_, SharedBridge>,
-    text: String,
+    text: Option<String>,
+    start: Option<u64>,
+    end: Option<u64>,
+    replacement: Option<String>,
 ) -> Result<Value, String> {
-    edit_active(&bridge, text)
+    edit_active(&bridge, text, start, end, replacement)
 }
 
 #[tauri::command]
@@ -373,6 +384,7 @@ pub fn run() {
             line_window_cmd,
             buffer_len_cmd,
             buffer_rev_cmd,
+            buffer_line_count_cmd,
             accept_cmd,
             evoke_cmd,
             list_tabs_cmd,

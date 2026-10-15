@@ -95,6 +95,16 @@ export class EditorShell {
     return this.intent.editBuffer(this.activeId, text);
   }
 
+  /** Span edit on the active Buffer (virtual-scroll / large-file typing path). */
+  editActiveRange(
+    start: number,
+    end: number,
+    replacement: string,
+  ): BufferSnapshot {
+    if (!this.activeId) throw new Error("no active Buffer");
+    return this.intent.editBufferRange(this.activeId, start, end, replacement);
+  }
+
   editBuffer(bufferId: BufferId, text: string): BufferSnapshot {
     this.requireTab(bufferId);
     return this.intent.editBuffer(bufferId, text);

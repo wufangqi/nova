@@ -13,7 +13,8 @@ import {
   chooseSaveAction,
   pathInputValueForActive,
 } from "./path-toolbar.ts";
-import { formatPatchDiff, type Patch } from "./patch-diff.ts";
+import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
+import { VirtualEditor } from "./virtual-editor.ts";
 
 /** Mirrors nova `GLOBAL_HOTKEY_ACCELERATOR` / Tauri registration. */
 const GLOBAL_HOTKEY_ACCELERATOR = "Ctrl+Alt+N";
@@ -22,7 +23,7 @@ const HOTKEY_EVOKE_EVENT = "hotkey-evoke";
 
 type BufferSnapshot = {
   id: string;
-  text: string;
+  text?: string;
   revision: number;
 };
 
@@ -137,6 +138,8 @@ type AcceptIpcResult = {
 type FindHit = {
   start: number;
   end: number;
+  line: number;
+  column: number;
   match: string;
   groups: Record<number, string>;
 };
@@ -286,12 +289,13 @@ const actionPort: ActionPanelPort = {
 
 const actionPanel = new ActionPanel(actionPort);
 
-let applyingRemote = false;
 let activeId: string | null = null;
 let pendingPreviewId: string | null = null;
 let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
+let lastFindHits: FindHit[] = [];
+let virtualEditor: VirtualEditor;
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing #${id}`);
@@ -300,6 +304,12 @@ function el<T extends HTMLElement>(id: string): T {
 
 function setStatus(message: string) {
   el<HTMLElement>("status").textContent = message;
+}
+
+async function sliceActive(start: number, end: number): Promise<string> {
+  if (!activeId || start === end) return "";
+  const result = await invoke<{ text: string }>("slice_cmd", { id: activeId, start, end });
+  return result.text;
 }
 
 function setIntentActions(opts: {
@@ -348,8 +358,7 @@ function clearPreviewPanel() {
 
 /** Current editor range (caret counts as empty Selection for Action run). */
 function editorRange(): { start: number; end: number } {
-  const editor = el<HTMLTextAreaElement>("editor");
-  return { start: editor.selectionStart, end: editor.selectionEnd };
+  return virtualEditor.absSelection();
 }
 
 function renderTabs(tabs: TabInfo[]) {
@@ -368,15 +377,11 @@ function renderTabs(tabs: TabInfo[]) {
   }
 }
 
-function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
-  const editor = el<HTMLTextAreaElement>("editor");
+async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
   const pathInput = el<HTMLInputElement>("path-input");
   activeId = buffer?.id ?? null;
   renderTabs(tabs);
-  applyingRemote = true;
-  editor.disabled = !buffer;
-  editor.value = buffer?.text ?? "";
-  applyingRemote = false;
+  await virtualEditor.bind(buffer?.id ?? null, buffer?.revision);
   const active = tabs.find((t) => t.active);
   // Always sync — untitled must clear so Save cannot reuse another tab's Path.
   pathInput.value = pathInputValueForActive(active);
@@ -385,11 +390,7 @@ function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
 function editorSelection():
   | { start: number; end: number }
   | undefined {
-  const editor = el<HTMLTextAreaElement>("editor");
-  if (editor.selectionStart !== editor.selectionEnd) {
-    return { start: editor.selectionStart, end: editor.selectionEnd };
-  }
-  return undefined;
+  return virtualEditor.absSelectionOrUndefined();
 }
 
 
@@ -430,9 +431,10 @@ function setFindReplaceAccept(enabled: boolean) {
 
 function clearFindHits() {
   setFindReplaceAccept(false);
+  lastFindHits = [];
   const hitsEl = el<HTMLElement>("find-hits");
   hitsEl.hidden = true;
-  hitsEl.textContent = "";
+  hitsEl.replaceChildren();
 }
 
 function fillFindBarFromDraft(draft: {
@@ -448,38 +450,47 @@ function fillFindBarFromDraft(draft: {
   el<HTMLInputElement>("find-flag-s").checked = flags.includes("s");
 }
 
-function formatFindHits(hits: FindHit[], count: number): string {
-  if (count === 0) return "0 hits";
-  const lines = hits.slice(0, 50).map((h, i) => {
+function renderFindHits(hits: FindHit[], count: number) {
+  lastFindHits = hits;
+  const hitsEl = el<HTMLElement>("find-hits");
+  hitsEl.hidden = false;
+  hitsEl.replaceChildren();
+  const summary = document.createElement("div");
+  summary.textContent = `${count} hit${count === 1 ? "" : "s"}`;
+  hitsEl.appendChild(summary);
+  for (const h of hits.slice(0, 50)) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "find-hit";
     const groups =
       Object.keys(h.groups).length > 0
         ? ` groups=${JSON.stringify(h.groups)}`
         : "";
-    return `${i + 1}. [${h.start},${h.end}) ${JSON.stringify(h.match)}${groups}`;
-  });
-  if (count > 50) lines.push(`…and ${count - 50} more`);
-  return `${count} hit${count === 1 ? "" : "s"}\n${lines.join("\n")}`;
+    btn.textContent = `[${h.start},${h.end}) ${JSON.stringify(h.match)}${groups}`;
+    btn.addEventListener("click", () => {
+      void virtualEditor.revealRange(h.start, h.end, h.line);
+    });
+    hitsEl.appendChild(btn);
+  }
+  if (count > 50) {
+    const more = document.createElement("div");
+    more.textContent = `…and ${count - 50} more`;
+    hitsEl.appendChild(more);
+  }
 }
 
-function jumpEditorTo(start: number, end: number) {
-  const editor = el<HTMLTextAreaElement>("editor");
-  editor.focus();
-  editor.setSelectionRange(start, end);
-  // Approximate scroll so the jumped span is visible.
-  const before = editor.value.slice(0, start);
-  const line = before.split("\n").length;
-  const lineHeight = editor.scrollHeight / Math.max(editor.value.split("\n").length, 1);
-  editor.scrollTop = Math.max(0, (line - 3) * lineHeight);
+async function jumpEditorTo(start: number, end: number, hintLine?: number) {
+  await virtualEditor.revealRange(start, end, hintLine);
 }
 
 async function evoke() {
   const result = await invoke<ShellBufferResult>("evoke_cmd");
-  applyState(result.buffer, result.tabs);
+  await applyState(result.buffer, result.tabs);
   clearPreviewPanel();
   clearSuggestionsBar();
   clearFindHits();
   setStatus(`New untitled Buffer (${result.buffer.id.slice(0, 8)}…)`);
-  el<HTMLTextAreaElement>("editor").focus();
+  virtualEditor.focus();
 }
 
 /** Visual ten-second Demo (WUF-87): new Buffer → paste → Intent → diff → Accept. */
@@ -490,7 +501,7 @@ async function runVisualDemo() {
 
   setStatus("Demo: evoke new Buffer…");
   const evoked = await invoke<ShellBufferResult>("evoke_cmd");
-  applyState(evoked.buffer, evoked.tabs);
+  await applyState(evoked.buffer, evoked.tabs);
   clearPreviewPanel();
   clearSuggestionsBar();
   clearFindHits();
@@ -499,10 +510,8 @@ async function runVisualDemo() {
   const pasted = await invoke<ShellBufferResult>("edit_active_cmd", {
     text: pasteText,
   });
-  applyState(pasted.buffer, pasted.tabs);
-  const editor = el<HTMLTextAreaElement>("editor");
-  editor.focus();
-  editor.setSelectionRange(selection.start, selection.end);
+  await applyState(pasted.buffer, pasted.tabs);
+  await virtualEditor.revealRange(selection.start, selection.end);
 
   el<HTMLInputElement>("intent-input").value = utterance;
   setStatus("Demo: Intent preview…");
@@ -539,29 +548,38 @@ async function runVisualDemo() {
   }
   lastUndoGroupId = accepted.accept.undoGroupId;
   const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-  applyState(state.buffer, state.tabs);
+  await applyState(state.buffer, state.tabs);
   clearPreviewPanel();
   setIntentActions({ undo: true });
+  const demoSlice = await invoke<{ text: string }>("slice_cmd", {
+    id: state.buffer!.id,
+    start: 0,
+    end: 64,
+  });
   setStatus(
-    `Demo done: hotkey→paste→Intent→diff→Accept (${state.buffer?.text ?? ""})`,
+    `Demo done: hotkey→paste→Intent→diff→Accept (${demoSlice.text})`,
   );
 }
 
 async function activateTab(id: string) {
   if (id === activeId) return;
   const result = await invoke<ShellBufferResult>("activate_tab_cmd", { id });
-  applyState(result.buffer, result.tabs);
+  await applyState(result.buffer, result.tabs);
   clearPreviewPanel();
   clearSuggestionsBar();
   clearFindHits();
   setStatus(`Switched to ${result.tabs.find((t) => t.active)?.title ?? id}`);
 }
 
-async function onEdit() {
-  if (applyingRemote || !activeId) return;
-  const text = el<HTMLTextAreaElement>("editor").value;
-  const result = await invoke<ShellBufferResult>("edit_active_cmd", { text });
-  applyState(result.buffer, result.tabs);
+async function gotoLine() {
+  const raw = el<HTMLInputElement>("goto-line").value.trim();
+  const line = Number.parseInt(raw, 10);
+  if (!Number.isFinite(line) || line < 1) {
+    setStatus("Enter a 1-based line number");
+    return;
+  }
+  await virtualEditor.gotoLine(line);
+  setStatus(`Went to line ${line}`);
 }
 
 async function openPath() {
@@ -572,7 +590,7 @@ async function openPath() {
   }
   try {
     const result = await invoke<ShellBufferResult>("open_path_cmd", { path });
-    applyState(result.buffer, result.tabs);
+    await applyState(result.buffer, result.tabs);
     clearPreviewPanel();
     clearSuggestionsBar();
     clearFindHits();
@@ -603,7 +621,7 @@ async function save() {
       setStatus(`Saved as ${action.saveAs}`);
     }
     const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    applyState(state.buffer, result.tabs);
+    await applyState(state.buffer, result.tabs);
   } catch (err) {
     setStatus(String(err));
   }
@@ -623,7 +641,7 @@ async function closeActive() {
           ? "Discard unsaved untitled Buffer?"
           : "Discard unsaved changes?";
       if (!window.confirm(message)) {
-        applyState(
+        await applyState(
           (await invoke<ShellStateResult>("get_shell_state_cmd")).buffer,
           result.tabs,
         );
@@ -634,7 +652,7 @@ async function closeActive() {
         id,
       });
       const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-      applyState(state.buffer, confirmed.tabs);
+      await applyState(state.buffer, confirmed.tabs);
       clearPreviewPanel();
       clearSuggestionsBar();
       clearFindHits();
@@ -642,7 +660,7 @@ async function closeActive() {
       return;
     }
     const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    applyState(state.buffer, result.tabs);
+    await applyState(state.buffer, result.tabs);
     clearPreviewPanel();
     clearSuggestionsBar();
     clearFindHits();
@@ -653,12 +671,12 @@ async function closeActive() {
 }
 
 async function onHotkeyEvoke(payload: ShellBufferResult) {
-  applyState(payload.buffer, payload.tabs);
+  await applyState(payload.buffer, payload.tabs);
   clearPreviewPanel();
   setStatus(
     `Hotkey ${GLOBAL_HOTKEY_ACCELERATOR}: new untitled (${payload.buffer.id.slice(0, 8)}…)`,
   );
-  el<HTMLTextAreaElement>("editor").focus();
+  virtualEditor.focus();
 }
 
 function showCostAndOutbound(preview: Exclude<PreviewResult, { kind: "error" }>) {
@@ -712,7 +730,7 @@ async function jumpToAnchor(anchor: ExplanationAnchor) {
       "resolve_explanation_anchor_cmd",
       { anchor },
     );
-    applyState(result.buffer, result.tabs);
+    await applyState(result.buffer, result.tabs);
 
     const list = el<HTMLElement>("explanation-anchors");
     for (const btn of list.querySelectorAll("button")) {
@@ -724,7 +742,7 @@ async function jumpToAnchor(anchor: ExplanationAnchor) {
     }
 
     if (result.resolve.ok) {
-      jumpEditorTo(result.resolve.start, result.resolve.end);
+      await jumpEditorTo(result.resolve.start, result.resolve.end);
       setStatus(
         `Jumped to anchor (${result.resolve.start}–${result.resolve.end}) — Buffer unchanged`,
       );
@@ -745,7 +763,7 @@ async function applyPreviewResult(
   scopeHint: string,
 ) {
   clearPreviewPanel();
-  applyState(buffer, tabs);
+  await applyState(buffer, tabs);
 
   if (preview.kind === "error") {
     setStatus(`${preview.reason}: ${preview.guidance}`);
@@ -760,7 +778,7 @@ async function applyPreviewResult(
   if (preview.kind === "patches") {
     pendingPatches = preview.patches;
     diffEl.hidden = false;
-    diffEl.textContent = formatPatchDiff(buffer.text, preview.patches);
+    diffEl.textContent = await formatPatchDiffAsync(preview.patches, sliceActive);
     setIntentActions({ accept: true, reject: true });
     setSaveAsActionEnabled(false);
     setStatus(`Preview ready (${scopeHint}) — Accept or Reject`);
@@ -883,7 +901,7 @@ async function previewRunAction(action: ActionView) {
     }
 
     const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    applyState(state.buffer, state.tabs);
+    await applyState(state.buffer, state.tabs);
 
     clearPreviewPanel();
     pendingPreviewId = result.run.previewId;
@@ -895,10 +913,7 @@ async function previewRunAction(action: ActionView) {
     el<HTMLElement>("outbound-banner").hidden = true;
     const diffEl = el<HTMLElement>("patch-diff");
     diffEl.hidden = false;
-    diffEl.textContent = formatPatchDiff(
-      state.buffer?.text ?? "",
-      pendingPatches,
-    );
+    diffEl.textContent = await formatPatchDiffAsync(pendingPatches, sliceActive);
     setIntentActions({ accept: true, reject: true });
     setSaveAsActionEnabled(false);
     setStatus(result.message);
@@ -974,11 +989,9 @@ async function runFind() {
     const result = await invoke<FindIpcResult>("find_cmd", {
       params: findParams(),
     });
-    applyState(result.buffer, result.tabs);
+    await applyState(result.buffer, result.tabs);
     setFindReplaceAccept(false);
-    const hitsEl = el<HTMLElement>("find-hits");
-    hitsEl.hidden = false;
-    hitsEl.textContent = formatFindHits(result.hits, result.count);
+    renderFindHits(result.hits, result.count);
     setStatus(`Find: ${result.count} hit${result.count === 1 ? "" : "s"}`);
   } catch (err) {
     setStatus(String(err));
@@ -994,7 +1007,7 @@ async function previewFindReplace() {
     const result = await invoke<PreviewReplaceIpcResult>("preview_replace_cmd", {
       params: findParams(),
     });
-    applyState(result.buffer, result.tabs);
+    await applyState(result.buffer, result.tabs);
     const hitsEl = el<HTMLElement>("find-hits");
     hitsEl.hidden = false;
     if (!result.preview.ok) {
@@ -1004,9 +1017,9 @@ async function previewFindReplace() {
       return;
     }
     setFindReplaceAccept(true);
-    hitsEl.textContent = formatPatchDiff(
-      result.buffer.text,
+    hitsEl.textContent = await formatPatchDiffAsync(
       result.preview.patches,
+      sliceActive,
     );
     setStatus(
       "Replace preview ready — Replace Accept writes via IntentService (UndoGroup)",
@@ -1030,7 +1043,7 @@ async function acceptFindReplace() {
       return;
     }
     lastUndoGroupId = result.accept.undoGroupId;
-    applyState(result.buffer, result.tabs);
+    await applyState(result.buffer, result.tabs);
     clearFindHits();
     setIntentActions({ undo: true });
     setStatus(
@@ -1056,7 +1069,7 @@ async function acceptPreview() {
     }
     lastUndoGroupId = result.accept.undoGroupId;
     const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    applyState(state.buffer, state.tabs);
+    await applyState(state.buffer, state.tabs);
     clearPreviewPanel();
     setIntentActions({ undo: true });
     setStatus(`Accepted — UndoGroup ${lastUndoGroupId.slice(0, 8)}…`);
@@ -1089,7 +1102,7 @@ async function undoLast() {
       undoGroupId: lastUndoGroupId,
     });
     lastUndoGroupId = null;
-    applyState(result.buffer, result.tabs);
+    await applyState(result.buffer, result.tabs);
     setIntentActions({ undo: false });
     setStatus("UndoGroup restored Buffer");
   } catch (err) {
@@ -1226,11 +1239,45 @@ window.addEventListener("DOMContentLoaded", () => {
   el<HTMLButtonElement>("close-tab").addEventListener("click", () => {
     void closeActive();
   });
-  el<HTMLTextAreaElement>("editor").addEventListener("input", () => {
-    void onEdit().catch((err) => setStatus(String(err)));
-  });
+  virtualEditor = new VirtualEditor(
+    el("editor-viewport"),
+    el("editor-spacer"),
+    el("editor-window"),
+    el("editor"),
+    {
+      lineWindow: (id, lineStart, lineCount) =>
+        invoke("line_window_cmd", { id, lineStart, lineCount }),
+      lineCount: async (id) => {
+        const r = await invoke<{ lineCount: number }>("buffer_line_count_cmd", { id });
+        return r.lineCount;
+      },
+      editRange: async (start, end, replacement) => {
+        const result = await invoke<ShellBufferResult>("edit_active_cmd", {
+          start, end, replacement,
+        });
+        renderTabs(result.tabs);
+        activeId = result.buffer.id;
+        return { revision: result.buffer.revision };
+      },
+    },
+  );
   el<HTMLTextAreaElement>("editor").addEventListener("paste", (ev) => {
     void onEditorPaste(ev);
+  });
+  el<HTMLButtonElement>("goto-line-go").addEventListener("click", () => {
+    void gotoLine();
+  });
+  el<HTMLInputElement>("goto-line").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      void gotoLine();
+    }
+  });
+  window.addEventListener("keydown", (ev) => {
+    if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "g") {
+      ev.preventDefault();
+      el<HTMLInputElement>("goto-line").focus();
+    }
   });
 
   el<HTMLButtonElement>("intent-preview").addEventListener("click", () => {

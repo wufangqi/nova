@@ -5,7 +5,9 @@ import {
   createBuffer as coreCreateBuffer,
   dropBuffer,
   len as coreLen,
+  lineCount as coreLineCount,
   lineWindow as coreLineWindow,
+  replaceRange as coreReplaceRange,
   rev as coreRev,
   setText as coreSetText,
   slice as coreSlice,
@@ -227,6 +229,11 @@ export class IntentService {
     return coreLen(id);
   }
 
+  lineCount(id: BufferId): number {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreLineCount(id);
+  }
+
   rev(id: BufferId): number {
     if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
     return coreRev(id);
@@ -237,6 +244,22 @@ export class IntentService {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
     coreSetText(id, text);
+    return snapshot(b);
+  }
+
+  /**
+   * Span human edit — replace `[start, end)` without requiring full text in JS.
+   * Not a Patch Accept (typing / paste path).
+   */
+  editBufferRange(
+    id: BufferId,
+    start: number,
+    end: number,
+    replacement: string,
+  ): BufferSnapshot {
+    const b = this.buffers.get(id);
+    if (!b) throw new Error(`unknown Buffer: ${id}`);
+    coreReplaceRange(id, start, end, replacement);
     return snapshot(b);
   }
 

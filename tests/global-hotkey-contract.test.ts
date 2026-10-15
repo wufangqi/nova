@@ -82,6 +82,18 @@ describe("IPC evoke path used by the hotkey port", () => {
     });
     assert.equal(switchBack.ok, true);
     if (!switchBack.ok) return;
-    assert.equal(switchBack.result.buffer.text, "scratch that must survive");
+    // Shell snapshots omit full text (WUF-101); verify via slice.
+    assert.equal(switchBack.result.buffer.text, undefined);
+    const slice = await host.handle({
+      method: "slice",
+      params: {
+        id: switchBack.result.buffer.id,
+        start: 0,
+        end: "scratch that must survive".length,
+      },
+    });
+    assert.equal(slice.ok, true);
+    if (!slice.ok) return;
+    assert.equal(slice.result.text, "scratch that must survive");
   });
 });

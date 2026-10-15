@@ -4,7 +4,8 @@
  * All Accept writes go through IntentService.accept only (FindBar.replaceAccept included).
  * WUF-86: Explanation anchor resolve + ClipboardSuggestions (default off).
  * WUF-92: Action methods are pure forwards to ActionService (no host-owned semantics).
- * WUF-98: slice / line_window / buffer_len / buffer_rev; snapshots omit text by default.
+ * WUF-98/101: slice / line_window / buffer_len / buffer_rev / buffer_line_count;
+ * snapshots omit text by default (shell methods included for virtual scroll).
  */
 import type { BufferSnapshot } from "../types.js";
 import {
@@ -25,6 +26,8 @@ import type {
   ApplyDraftRequest,
   BufferLenRequest,
   BufferLenResult,
+  BufferLineCountRequest,
+  BufferLineCountResult,
   BufferRevRequest,
   BufferRevResult,
   ConfirmCloseRequest,
@@ -135,6 +138,9 @@ export class IntentIpcHost {
   handle(request: LineWindowRequest): Promise<IpcResponse<LineWindowResult>>;
   handle(request: BufferLenRequest): Promise<IpcResponse<BufferLenResult>>;
   handle(request: BufferRevRequest): Promise<IpcResponse<BufferRevResult>>;
+  handle(
+    request: BufferLineCountRequest,
+  ): Promise<IpcResponse<BufferLineCountResult>>;
   handle(request: AcceptRequest): Promise<IpcResponse<AcceptIpcResult>>;
   handle(request: EvokeRequest): Promise<IpcResponse<ShellBufferResult>>;
   handle(request: ListTabsRequest): Promise<IpcResponse<ShellTabsResult>>;
@@ -235,6 +241,13 @@ export class IntentIpcHost {
               rev: this.service.rev(request.params.id),
             } satisfies BufferRevResult,
           };
+        case "buffer_line_count":
+          return {
+            ok: true,
+            result: {
+              lineCount: this.service.lineCount(request.params.id),
+            } satisfies BufferLineCountResult,
+          };
         case "accept": {
           const accept = this.service.accept(request.params.patches);
           const ids = [
@@ -249,7 +262,10 @@ export class IntentIpcHost {
           const buffer = this.shell.evokeNewUntitled();
           return {
             ok: true,
-            result: { buffer, tabs: this.shell.listTabs() } satisfies ShellBufferResult,
+            result: {
+              buffer: toIpcSnapshot(buffer, false),
+              tabs: this.shell.listTabs(),
+            } satisfies ShellBufferResult,
           };
         }
         case "list_tabs":
@@ -262,23 +278,46 @@ export class IntentIpcHost {
           return {
             ok: true,
             result: {
-              buffer: this.shell.getActiveBuffer(),
+              buffer: toIpcSnapshot(this.shell.getActiveBuffer(), false),
               tabs: this.shell.listTabs(),
             } satisfies ShellBufferResult,
           };
         }
         case "edit_active": {
-          const buffer = this.shell.editActive(request.params.text);
+          const params = request.params;
+          const isSpan =
+            typeof params.start === "number" &&
+            typeof params.end === "number" &&
+            typeof params.replacement === "string";
+          if (!isSpan && typeof params.text !== "string") {
+            return {
+              ok: false,
+              error: "edit_active requires text or start/end/replacement",
+            };
+          }
+          const buffer = isSpan
+            ? this.shell.editActiveRange(
+                params.start!,
+                params.end!,
+                params.replacement!,
+              )
+            : this.shell.editActive(params.text!);
           return {
             ok: true,
-            result: { buffer, tabs: this.shell.listTabs() } satisfies ShellBufferResult,
+            result: {
+              buffer: toIpcSnapshot(buffer, false),
+              tabs: this.shell.listTabs(),
+            } satisfies ShellBufferResult,
           };
         }
         case "open_path": {
           const buffer = await this.shell.openPath(request.params.path);
           return {
             ok: true,
-            result: { buffer, tabs: this.shell.listTabs() } satisfies ShellBufferResult,
+            result: {
+              buffer: toIpcSnapshot(buffer, false),
+              tabs: this.shell.listTabs(),
+            } satisfies ShellBufferResult,
           };
         }
         case "save_active": {
@@ -314,7 +353,9 @@ export class IntentIpcHost {
           return {
             ok: true,
             result: {
-              buffer: id ? this.service.getBuffer(id) : null,
+              buffer: id
+                ? toIpcSnapshot(this.service.getBuffer(id), false)
+                : null,
               tabs: this.shell.listTabs(),
             } satisfies ShellStateResult,
           };
@@ -351,11 +392,10 @@ export class IntentIpcHost {
         }
         case "undo": {
           this.service.undo(request.params.undoGroupId);
-          const buffer = this.shell.getActiveBuffer();
           return {
             ok: true,
             result: {
-              buffer,
+              buffer: toIpcSnapshot(this.shell.getActiveBuffer(), false),
               tabs: this.shell.listTabs(),
             } satisfies UndoIpcResult,
           };

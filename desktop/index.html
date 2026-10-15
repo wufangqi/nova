@@ -30,13 +30,37 @@
 
       <nav id="tab-bar" class="tab-bar" aria-label="Buffers"></nav>
 
-      <textarea
-        id="editor"
-        class="editor"
-        spellcheck="false"
-        placeholder="Untitled Buffer — start typing"
-        disabled
-      ></textarea>
+      <div class="editor-chrome">
+        <label class="goto-field" title="Jump to line without loading full text">
+          <span>Go to line</span>
+          <input
+            id="goto-line"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="1"
+            spellcheck="false"
+          />
+        </label>
+        <button type="button" id="goto-line-go">Go</button>
+      </div>
+
+      <div
+        id="editor-viewport"
+        class="editor-viewport"
+        aria-label="Virtual editor"
+      >
+        <div id="editor-spacer" class="editor-spacer"></div>
+        <div id="editor-window" class="editor-window">
+          <textarea
+            id="editor"
+            class="editor"
+            spellcheck="false"
+            placeholder="Untitled Buffer — start typing"
+            disabled
+          ></textarea>
+        </div>
+      </div>
 
       <section class="find-panel" aria-label="FindBar">
         <div class="find-bar">

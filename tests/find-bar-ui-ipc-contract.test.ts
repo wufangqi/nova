@@ -75,7 +75,14 @@ describe("IPC FindBar replace Accept + UndoGroup", () => {
     });
     assert.equal(undone.ok, true);
     if (!undone.ok) return;
-    assert.equal(undone.result.buffer.text, "cat dog cat");
+    assert.equal(undone.result.buffer.text, undefined);
+    const restored = await host.handle({
+      method: "slice",
+      params: { id: undone.result.buffer.id, start: 0, end: 11 },
+    });
+    assert.equal(restored.ok, true);
+    if (!restored.ok) return;
+    assert.equal(restored.result.text, "cat dog cat");
   });
 });
 

@@ -1,8 +1,9 @@
 /**
- * WUF-81/82/84/85/86/92/98 — Tauri IPC request/response shapes.
+ * WUF-81/82/84/85/86/92/98/101 — Tauri IPC request/response shapes.
  * Thin facade over IntentService + EditorShell + FindBar + ActionService;
- * no alternate Accept path. WUF-98: slice / line_window / len / rev;
- * BufferSnapshot.text omitted by default on get_buffer / create_buffer / accept.
+ * no alternate Accept path. WUF-98/101: slice / line_window / len / rev /
+ * line_count; BufferSnapshot.text omitted by default (incl. shell methods).
+ * edit_active accepts full text (legacy) or span { start, end, replacement }.
  */
 import type {
   AcceptResult,
@@ -41,6 +42,7 @@ export type IpcMethod =
   | "line_window"
   | "buffer_len"
   | "buffer_rev"
+  | "buffer_line_count"
   | "accept"
   | "evoke"
   | "list_tabs"
@@ -110,6 +112,11 @@ export type BufferRevRequest = {
   params: { id: string };
 };
 
+export type BufferLineCountRequest = {
+  method: "buffer_line_count";
+  params: { id: string };
+};
+
 export type AcceptRequest = {
   method: "accept";
   params: { patches: Patch[] };
@@ -132,7 +139,14 @@ export type ActivateTabRequest = {
 
 export type EditActiveRequest = {
   method: "edit_active";
-  params: { text: string };
+  params:
+    | { text: string; start?: never; end?: never; replacement?: never }
+    | {
+        start: number;
+        end: number;
+        replacement: string;
+        text?: never;
+      };
 };
 
 export type OpenPathRequest = {
@@ -301,6 +315,7 @@ export type IpcRequest =
   | LineWindowRequest
   | BufferLenRequest
   | BufferRevRequest
+  | BufferLineCountRequest
   | AcceptRequest
   | EvokeRequest
   | ListTabsRequest
@@ -342,6 +357,7 @@ export type SliceResult = { text: string };
 export type LineWindowResult = LineWindow;
 export type BufferLenResult = { len: number };
 export type BufferRevResult = { rev: number };
+export type BufferLineCountResult = { lineCount: number };
 export type AcceptIpcResult = {
   accept: AcceptResult;
   /** Buffer snapshots after Accept attempt (same ids as patches). */
