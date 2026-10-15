@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { IntentIpcHost } from "../src/ipc/host.js";
 import type { Patch } from "../src/types.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 function aiPatch(
   bufferId: string,
@@ -127,6 +128,6 @@ describe("IPC accept hand-crafted Patch", () => {
     assert.equal(accept.result.accept.ok, false);
     if (accept.result.accept.ok) return;
     assert.equal(accept.result.accept.reason, "reloc_failed");
-    assert.equal(host.service.getBuffer(created.result.id).text, "ALPHA beta");
+    assert.equal(bufferBody(host.service, created.result.id), "ALPHA beta");
   });
 });

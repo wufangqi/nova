@@ -38,7 +38,7 @@ describe("IPC Explanation preview does not mutate Buffer", () => {
 
     assert.ok(previewed.result.preview.explanation.summary.length > 0);
     assert.ok(previewed.result.preview.explanation.anchors.length >= 1);
-    assert.equal(previewed.result.buffer.text, original);
+    assert.equal(previewed.result.buffer.text, undefined);
     assert.equal(previewed.result.buffer.revision, before.result.revision);
 
     const rejected = await host.handle({
@@ -94,13 +94,18 @@ describe("IPC Explanation anchors jump or are distinguishable when invalid", () 
     assert.equal(jumped.result.resolve.ok, true);
     if (!jumped.result.resolve.ok) return;
     assert.equal(jumped.result.resolve.status, "valid");
-    assert.equal(
-      jumped.result.buffer.text.slice(
-        jumped.result.resolve.start,
-        jumped.result.resolve.end,
-      ),
-      anchor.excerpt,
-    );
+    assert.equal(jumped.result.buffer.text, undefined);
+    const excerptSlice = await host.handle({
+      method: "slice",
+      params: {
+        id: evoked.result.buffer.id,
+        start: jumped.result.resolve.start,
+        end: jumped.result.resolve.end,
+      },
+    });
+    assert.equal(excerptSlice.ok, true);
+    if (!excerptSlice.ok) return;
+    assert.equal(excerptSlice.result.text, anchor.excerpt);
 
     // Destroy the anchored span so relocate cannot safely find a unique match.
     await host.handle({
@@ -225,7 +230,7 @@ describe("IPC selecting a Suggestion enters preview without writing Buffer", () 
         selected.result.preview.kind === "regex_draft" ||
         selected.result.preview.kind === "error",
     );
-    assert.equal(selected.result.buffer.text, original);
+    assert.equal(selected.result.buffer.text, undefined);
 
     const after = await host.handle({
       method: "get_buffer",

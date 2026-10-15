@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { ClipboardSuggestions, MAX_SUGGESTIONS } from "../src/suggestions.js";
 import { IntentService } from "../src/intent-service.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 describe("Suggestions default off", () => {
   it("is disabled on construction and returns no items on paste", () => {
@@ -68,7 +69,7 @@ describe("selecting a Suggestion enters Intent/preview without writing Buffer", 
         preview.kind === "error",
     );
 
-    assert.equal(svc.getBuffer(buf.id).text, original);
+    assert.equal(bufferBody(svc, buf.id), original);
   });
 
   it("Accept remains the only write path after selecting a Suggestion", () => {
@@ -88,18 +89,18 @@ describe("selecting a Suggestion enters Intent/preview without writing Buffer", 
       start: 0,
       end: original.length,
     });
-    assert.equal(svc.getBuffer(buf.id).text, original);
+    assert.equal(bufferBody(svc, buf.id), original);
 
     if (preview.kind === "patches") {
       const accepted = svc.accept(preview.patches);
       assert.equal(accepted.ok, true);
-      assert.notEqual(svc.getBuffer(buf.id).text, original);
+      assert.notEqual(bufferBody(svc, buf.id), original);
     } else {
       // Non-patch preview still must not have mutated; reject is a no-op write.
       if (preview.kind !== "error") {
         svc.reject(preview.previewId);
       }
-      assert.equal(svc.getBuffer(buf.id).text, original);
+      assert.equal(bufferBody(svc, buf.id), original);
     }
   });
 });

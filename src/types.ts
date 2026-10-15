@@ -24,8 +24,9 @@ export interface Provenance {
 export interface BufferSnapshot {
   id: BufferId;
   /**
-   * Logical text. Optional on IPC snapshots — omitted by default so callers
-   * use slice / line_window instead of pulling the whole Buffer.
+   * Logical text. Omitted by default (IntentService + IPC) — callers must use
+   * slice / lineWindow / len, or pass `{ includeText: true }` explicitly.
+   * Full text is never the silent default (WUF-98/WUF-99).
    */
   text?: string;
   revision: Revision;
@@ -33,6 +34,12 @@ export interface BufferSnapshot {
   eol: Eol;
   /** Whether Path IO should write a BOM for this Encoding. */
   bom: boolean;
+}
+
+/** Opt-in when a caller truly needs the whole Buffer body in JS. */
+export interface BufferSnapshotOptions {
+  /** When true, snapshot includes full text. Default: omit. */
+  includeText?: boolean;
 }
 
 /** Optional Buffer metadata applied only when Accept is explicit about it. */

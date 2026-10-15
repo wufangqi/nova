@@ -13,6 +13,7 @@ import { IntentService } from "../src/intent-service.js";
 import { MojibakeRepair } from "../src/mojibake-repair.js";
 import { encodeText } from "../src/encoding.js";
 import type { Patch } from "../src/types.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 function textPatch(
   bufferId: string,
@@ -37,7 +38,8 @@ describe("Buffer Encoding/EOL + Path round-trip", () => {
 
     const shell = new EditorShell();
     const opened = await shell.openPath(path);
-    assert.equal(opened.text.replace(/\r\n/g, "\n"), "你好世界\n第二行");
+    // Shell still opts into full text for the transitional desktop Path path.
+    assert.equal(opened.text!.replace(/\r\n/g, "\n"), "你好世界\n第二行");
     assert.equal(opened.encoding, "gbk");
     assert.equal(opened.eol, "crlf");
     assert.equal(opened.bom, false);
@@ -112,7 +114,7 @@ describe("Accept after mojibake preview", () => {
     assert.equal(result.ok, true);
 
     const after = intent.getBuffer(buf.id);
-    assert.equal(after.text, "你好");
+    assert.equal(bufferBody(intent, after.id), "你好");
     assert.equal(after.encoding, "gbk");
     assert.equal(after.bom, false);
     assert.equal(after.eol, "lf");
@@ -136,7 +138,7 @@ describe("Accept does not silently change BOM/EOL", () => {
     assert.equal(result.ok, true);
 
     const after = intent.getBuffer(buf.id);
-    assert.equal(after.text, "hello nova");
+    assert.equal(bufferBody(intent, after.id), "hello nova");
     assert.equal(after.encoding, "utf-8");
     assert.equal(after.eol, "crlf");
     assert.equal(after.bom, true);
@@ -164,7 +166,7 @@ describe("Accept does not silently change BOM/EOL", () => {
     assert.equal(result.ok, true);
 
     const after = intent.getBuffer(buf.id);
-    assert.equal(after.text, "a\r\nb");
+    assert.equal(bufferBody(intent, after.id), "a\r\nb");
     assert.equal(after.encoding, "utf-8");
     assert.equal(after.eol, "crlf");
     assert.equal(after.bom, true);

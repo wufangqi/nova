@@ -1,8 +1,13 @@
 /**
- * WUF-81/82/84/85/86/92/98 — Tauri IPC request/response shapes.
+ * WUF-81/82/84/85/86/92/98/99 — Tauri IPC request/response shapes.
  * Thin facade over IntentService + EditorShell + FindBar + ActionService;
- * no alternate Accept path. WUF-98: slice / line_window / len / rev;
- * BufferSnapshot.text omitted by default on get_buffer / create_buffer / accept.
+ * no alternate Accept path. WUF-98/99: slice / line_window / len / rev;
+ * BufferSnapshot.text is NOT the default — omitted on get_buffer /
+ * create_buffer / accept and on Intent / FindBar / Action / Undo /
+ * Explanation / Suggestion results. Opt in only via includeText: true on
+ * get_buffer / create_buffer. Desktop shell methods (evoke / edit_active /
+ * get_shell_state / …) still carry text for the transitional textarea path
+ * (WUF-101 removes that).
  */
 import type {
   AcceptResult,

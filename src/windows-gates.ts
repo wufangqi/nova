@@ -86,7 +86,9 @@ function largeFileGate(): GateResult {
   const text = chunk.slice(0, LARGE_FILE_CHARS);
   shell.editActive(text);
   const buf = shell.getActiveBuffer();
-  assertLarge(buf.text.length >= LARGE_FILE_CHARS - 16);
+  // Measure length via core — do not re-materialize the large body from a snapshot.
+  const chars = intent.len(buf.id);
+  assertLarge(chars >= LARGE_FILE_CHARS - 16);
 
   const parsed = intent.parse({
     bufferId: buf.id,
@@ -102,7 +104,7 @@ function largeFileGate(): GateResult {
     elapsedMs <= LARGE_FILE_MAX_MS &&
     sampled &&
     sampleEnd === 4096 &&
-    sampleEnd < buf.text.length;
+    sampleEnd < chars;
 
   return {
     name: "large_file",
@@ -110,7 +112,7 @@ function largeFileGate(): GateResult {
     elapsedMs,
     detail: ok
       ? `chars=${LARGE_FILE_CHARS}; edit+parse ${elapsedMs.toFixed(1)}ms ≤ ${LARGE_FILE_MAX_MS}ms; scope sampled 0…${sampleEnd}`
-      : `large file floor failed (chars=${buf.text.length}, elapsed=${elapsedMs.toFixed(1)}ms, sampled=${sampled}, end=${sampleEnd})`,
+      : `large file floor failed (chars=${chars}, elapsed=${elapsedMs.toFixed(1)}ms, sampled=${sampled}, end=${sampleEnd})`,
   };
 }
 

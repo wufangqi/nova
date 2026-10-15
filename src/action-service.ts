@@ -200,10 +200,11 @@ export class ActionService {
     }
 
     const buf = this.intent.getBuffer(input.bufferId);
+    const len = this.intent.len(input.bufferId);
     if (
       selection.start < 0 ||
       selection.end < selection.start ||
-      selection.end > buf.text.length
+      selection.end > len
     ) {
       return {
         ok: false,

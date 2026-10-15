@@ -174,7 +174,14 @@ describe("IPC save → list → preview_run → accept loop", () => {
     assert.equal(run.result.run.ok, true);
     if (!run.result.run.ok) return;
     assert.equal(run.result.run.cost.hasOutbound, false);
-    assert.equal(run.result.buffer.text, "red fox red hen");
+    assert.equal(run.result.buffer.text, undefined);
+    const beforeSlice = await host.handle({
+      method: "slice",
+      params: { id: bufferId, start: 0, end: 15 },
+    });
+    assert.equal(beforeSlice.ok, true);
+    if (!beforeSlice.ok) return;
+    assert.equal(beforeSlice.result.text, "red fox red hen");
     assert.equal(run.result.run.patches[0]!.provenance.source, "action");
 
     const accepted = await host.handle({
@@ -303,7 +310,14 @@ describe("IPC rename / delete / soft cap / empty Selection match facade", () => 
     assert.equal(run.result.run.ok, false);
     if (run.result.run.ok) return;
     assert.equal(run.result.run.reason, "empty_selection");
-    assert.equal(run.result.buffer.text, "red fox");
+    assert.equal(run.result.buffer.text, undefined);
+    const untouched = await host.handle({
+      method: "slice",
+      params: { id: bufferId, start: 0, end: 7 },
+    });
+    assert.equal(untouched.ok, true);
+    if (!untouched.ok) return;
+    assert.equal(untouched.result.text, "red fox");
   });
 });
 
