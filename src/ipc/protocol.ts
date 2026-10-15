@@ -1,7 +1,8 @@
 /**
- * WUF-81/82/84/85/86/92 — Tauri IPC request/response shapes.
+ * WUF-81/82/84/85/86/92/98 — Tauri IPC request/response shapes.
  * Thin facade over IntentService + EditorShell + FindBar + ActionService;
- * no alternate Accept path.
+ * no alternate Accept path. WUF-98: slice / line_window / len / rev;
+ * BufferSnapshot.text omitted by default on get_buffer / create_buffer / accept.
  */
 import type {
   AcceptResult,
@@ -23,6 +24,7 @@ import type {
   UndoGroupId,
   VisibleWindow,
 } from "../types.js";
+import type { LineWindow } from "../buffer-core.js";
 import type { CloseResult, TabInfo } from "../editor-shell.js";
 import type {
   FindHit,
@@ -35,6 +37,10 @@ import type { Suggestion } from "../suggestions.js";
 export type IpcMethod =
   | "create_buffer"
   | "get_buffer"
+  | "slice"
+  | "line_window"
+  | "buffer_len"
+  | "buffer_rev"
   | "accept"
   | "evoke"
   | "list_tabs"
@@ -68,11 +74,39 @@ export type IpcMethod =
 
 export type CreateBufferRequest = {
   method: "create_buffer";
-  params: { text?: string } & BufferCreateOptions;
+  params: {
+    text?: string;
+    /** When true, snapshot includes full text (default: omit). */
+    includeText?: boolean;
+  } & BufferCreateOptions;
 };
 
 export type GetBufferRequest = {
   method: "get_buffer";
+  params: {
+    id: string;
+    /** When true, snapshot includes full text (default: omit). */
+    includeText?: boolean;
+  };
+};
+
+export type SliceRequest = {
+  method: "slice";
+  params: { id: string; start: number; end: number };
+};
+
+export type LineWindowRequest = {
+  method: "line_window";
+  params: { id: string; lineStart: number; lineCount: number };
+};
+
+export type BufferLenRequest = {
+  method: "buffer_len";
+  params: { id: string };
+};
+
+export type BufferRevRequest = {
+  method: "buffer_rev";
   params: { id: string };
 };
 
@@ -263,6 +297,10 @@ export type PreviewRunRequest = {
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
+  | SliceRequest
+  | LineWindowRequest
+  | BufferLenRequest
+  | BufferRevRequest
   | AcceptRequest
   | EvokeRequest
   | ListTabsRequest
@@ -300,6 +338,10 @@ export type IpcResponse<T> = IpcOk<T> | IpcErr;
 
 export type CreateBufferResult = BufferSnapshot;
 export type GetBufferResult = BufferSnapshot;
+export type SliceResult = { text: string };
+export type LineWindowResult = LineWindow;
+export type BufferLenResult = { len: number };
+export type BufferRevResult = { rev: number };
 export type AcceptIpcResult = {
   accept: AcceptResult;
   /** Buffer snapshots after Accept attempt (same ids as patches). */

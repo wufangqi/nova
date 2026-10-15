@@ -19,7 +19,7 @@ describe("IPC Explanation preview does not mutate Buffer", () => {
 
     const before = await host.handle({
       method: "get_buffer",
-      params: { id: evoked.result.buffer.id },
+      params: { id: evoked.result.buffer.id, includeText: true },
     });
     assert.equal(before.ok, true);
     if (!before.ok) return;
@@ -49,7 +49,7 @@ describe("IPC Explanation preview does not mutate Buffer", () => {
 
     const after = await host.handle({
       method: "get_buffer",
-      params: { id: evoked.result.buffer.id },
+      params: { id: evoked.result.buffer.id, includeText: true },
     });
     assert.equal(after.ok, true);
     if (!after.ok) return;
@@ -229,7 +229,7 @@ describe("IPC selecting a Suggestion enters preview without writing Buffer", () 
 
     const after = await host.handle({
       method: "get_buffer",
-      params: { id: evoked.result.buffer.id },
+      params: { id: evoked.result.buffer.id, includeText: true },
     });
     assert.equal(after.ok, true);
     if (!after.ok) return;

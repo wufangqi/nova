@@ -23,7 +23,11 @@ export interface Provenance {
 
 export interface BufferSnapshot {
   id: BufferId;
-  text: string;
+  /**
+   * Logical text. Optional on IPC snapshots — omitted by default so callers
+   * use slice / line_window instead of pulling the whole Buffer.
+   */
+  text?: string;
   revision: Revision;
   encoding: string;
   eol: Eol;

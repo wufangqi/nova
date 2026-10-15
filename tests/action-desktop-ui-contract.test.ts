@@ -228,7 +228,7 @@ describe("desktop Action panel — re-run on Selection through the write seam", 
     // Preview must not have written.
     const before = await host.handle({
       method: "get_buffer",
-      params: { id: bufferId },
+      params: { id: bufferId, includeText: true },
     });
     assert.equal(before.ok, true);
     if (!before.ok) return;
@@ -241,7 +241,14 @@ describe("desktop Action panel — re-run on Selection through the write seam", 
     assert.equal(accepted.ok, true);
     if (!accepted.ok) return;
     assert.equal(accepted.result.accept.ok, true);
-    assert.equal(accepted.result.buffers[0]!.text, "blue fox red hen");
+    assert.equal(accepted.result.buffers[0]!.text, undefined);
+    const sliced = await host.handle({
+      method: "slice",
+      params: { id: bufferId, start: 0, end: 16 },
+    });
+    assert.equal(sliced.ok, true);
+    if (!sliced.ok) return;
+    assert.equal(sliced.result.text, "blue fox red hen");
   });
 
   it("reject keeps the Buffer unchanged", async () => {
@@ -266,7 +273,7 @@ describe("desktop Action panel — re-run on Selection through the write seam", 
 
     const after = await host.handle({
       method: "get_buffer",
-      params: { id: bufferId },
+      params: { id: bufferId, includeText: true },
     });
     assert.equal(after.ok, true);
     if (!after.ok) return;

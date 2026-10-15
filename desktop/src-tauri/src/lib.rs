@@ -1,12 +1,13 @@
 mod intent_bridge;
 
 use intent_bridge::{
-    accept, activate_tab, apply_draft, confirm_close, create_buffer, delete_action, edit_active,
-    evoke, find, get_buffer, get_draft, get_shell_state, get_suggestions_enabled, list_actions,
-    list_tabs, open_path, preview_intent, preview_replace, preview_run, reject_preview,
-    rename_action, replace_accept, request_close, resolve_explanation_anchor, save_active,
-    save_active_as, save_from_regex_draft, select_suggestion, set_cloud_enabled,
-    set_suggestions_enabled, suggestions_for_paste, undo, IntentBridge, SharedBridge,
+    accept, activate_tab, apply_draft, buffer_len, buffer_rev, confirm_close, create_buffer,
+    delete_action, edit_active, evoke, find, get_buffer, get_draft, get_shell_state,
+    get_suggestions_enabled, line_window, list_actions, list_tabs, open_path, preview_intent,
+    preview_replace, preview_run, reject_preview, rename_action, replace_accept, request_close,
+    resolve_explanation_anchor, save_active, save_active_as, save_from_regex_draft,
+    select_suggestion, set_cloud_enabled, set_suggestions_enabled, slice, suggestions_for_paste,
+    undo, IntentBridge, SharedBridge,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -30,8 +31,45 @@ fn create_buffer_cmd(
 fn get_buffer_cmd(
     bridge: tauri::State<'_, SharedBridge>,
     id: String,
+    include_text: Option<bool>,
 ) -> Result<Value, String> {
-    get_buffer(&bridge, id)
+    get_buffer(&bridge, id, include_text)
+}
+
+#[tauri::command]
+fn slice_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+    start: u64,
+    end: u64,
+) -> Result<Value, String> {
+    slice(&bridge, id, start, end)
+}
+
+#[tauri::command]
+fn line_window_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+    line_start: u64,
+    line_count: u64,
+) -> Result<Value, String> {
+    line_window(&bridge, id, line_start, line_count)
+}
+
+#[tauri::command]
+fn buffer_len_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    buffer_len(&bridge, id)
+}
+
+#[tauri::command]
+fn buffer_rev_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    buffer_rev(&bridge, id)
 }
 
 #[tauri::command]
@@ -331,6 +369,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             create_buffer_cmd,
             get_buffer_cmd,
+            slice_cmd,
+            line_window_cmd,
+            buffer_len_cmd,
+            buffer_rev_cmd,
             accept_cmd,
             evoke_cmd,
             list_tabs_cmd,
