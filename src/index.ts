@@ -45,6 +45,11 @@ export type {
   TenSecondDemoOptions,
   TenSecondDemoResult,
 } from "./ten-second-demo.js";
+export { runVisualTenSecondDemo } from "./visual-ten-second-demo.js";
+export type {
+  VisualTenSecondDemoOptions,
+  VisualTenSecondDemoResult,
+} from "./visual-ten-second-demo.js";
 export {
   runWindowsGates,
   LARGE_FILE_CHARS,

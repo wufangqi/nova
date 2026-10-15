@@ -1,6 +1,6 @@
 # Nova desktop (Tauri)
 
-WUF-81/82/83/84 — Windows-first Tauri shell: IntentService IPC + EditorShell multi-Buffer UI + OS global hotkey + Intent preview.
+WUF-81…87 — Windows-first Tauri shell: IntentService IPC + EditorShell multi-Buffer UI + OS global hotkey + Intent preview + visual ten-second Demo.
 
 ## Prerequisites (Windows)
 
@@ -30,6 +30,23 @@ Editor smoke in the window:
 5. **Ctrl+Alt+N** (global) → app focuses, new untitled Buffer, prior tabs kept
 6. Type Intent (e.g. `uppercase`) → **Preview** → see diff + Cost → **Accept** / **Reject**; **Undo** after Accept
 7. Toggle **Cloud path** → Preview shows Outbound banner
+8. **Demo** → one-click visual ten-second path (new Buffer → paste `hello demo` → Intent → diff → Accept). Without a local model, AI fails with guidance and the editor stays usable.
+
+Scriptable (no GUI): from repo root, `npm run demo:visual-ten-second` drives the same IPC methods.
+
+### Cold start / evoke smoke (Windows)
+
+```bash
+npm run build
+npm --prefix desktop install
+# Optional CDP: set WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222
+npm run desktop:dev
+# Cold start: window appears with Ready + global hotkey Ctrl+Alt+N
+# Evoke: Ctrl+Alt+N (or Demo) → new untitled; prior tabs kept
+# Demo: toolbar Demo → hello demo → HELLO demo + Undo
+```
+
+Release / package smoke (optional): `npm run desktop:build` then launch the built `Nova` MSI/NSIS or `desktop/src-tauri/target/release/desktop.exe`.
 
 IPC host: Node process running `dist/ipc/cli-host.js` (or `src/ipc/cli-host.ts` via tsx in dev). Override with `NOVA_IPC_HOST`. Set `NOVA_CLOUD_ENABLED=1` to start with cloud Outbound on.
 

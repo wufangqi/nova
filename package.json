@@ -17,6 +17,7 @@
     "notepad": "tsx src/cli/notepad.ts",
     "notepad:demo": "tsx src/cli/notepad-demo.ts",
     "demo:ten-second": "tsx src/cli/ten-second-demo.ts",
+    "demo:visual-ten-second": "tsx src/cli/visual-ten-second-demo.ts",
     "gates:windows": "tsx src/cli/windows-gates.ts",
     "ipc:host": "tsx src/ipc/cli-host.ts",
     "desktop:dev": "npm run build && npm --prefix desktop run tauri dev",

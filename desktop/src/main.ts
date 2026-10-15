@@ -365,6 +365,71 @@ async function evoke() {
   el<HTMLTextAreaElement>("editor").focus();
 }
 
+/** Visual ten-second Demo (WUF-87): new Buffer → paste → Intent → diff → Accept. */
+async function runVisualDemo() {
+  const pasteText = "hello demo";
+  const utterance = "make it uppercase";
+  const selection = { start: 0, end: 5 };
+
+  setStatus("Demo: evoke new Buffer…");
+  const evoked = await invoke<ShellBufferResult>("evoke_cmd");
+  applyState(evoked.buffer, evoked.tabs);
+  clearPreviewPanel();
+  clearSuggestionsBar();
+  clearFindHits();
+
+  setStatus("Demo: paste…");
+  const pasted = await invoke<ShellBufferResult>("edit_active_cmd", {
+    text: pasteText,
+  });
+  applyState(pasted.buffer, pasted.tabs);
+  const editor = el<HTMLTextAreaElement>("editor");
+  editor.focus();
+  editor.setSelectionRange(selection.start, selection.end);
+
+  el<HTMLInputElement>("intent-input").value = utterance;
+  setStatus("Demo: Intent preview…");
+  const previewed = await invoke<PreviewIntentResult>("preview_intent_cmd", {
+    utterance,
+    selection,
+    visibleWindow: null,
+  });
+  await applyPreviewResult(
+    previewed.preview,
+    previewed.buffer,
+    previewed.tabs,
+    previewed.intent.scopeLabel,
+  );
+
+  if (previewed.preview.kind === "error") {
+    setStatus(
+      `Demo: AI unavailable (${previewed.preview.reason}) — editor still usable`,
+    );
+    return;
+  }
+  if (previewed.preview.kind !== "patches") {
+    setStatus(`Demo: unexpected preview (${previewed.preview.kind})`);
+    return;
+  }
+
+  setStatus("Demo: Accept…");
+  const accepted = await invoke<AcceptIpcResult>("accept_cmd", {
+    patches: previewed.preview.patches,
+  });
+  if (!accepted.accept.ok) {
+    setStatus(`Demo Accept failed: ${accepted.accept.reason}`);
+    return;
+  }
+  lastUndoGroupId = accepted.accept.undoGroupId;
+  const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+  applyState(state.buffer, state.tabs);
+  clearPreviewPanel();
+  setIntentActions({ undo: true });
+  setStatus(
+    `Demo done: hotkey→paste→Intent→diff→Accept (${state.buffer?.text ?? ""})`,
+  );
+}
+
 async function activateTab(id: string) {
   if (id === activeId) return;
   const result = await invoke<ShellBufferResult>("activate_tab_cmd", { id });
@@ -881,6 +946,9 @@ async function selectSuggestion(suggestion: Suggestion) {
 window.addEventListener("DOMContentLoaded", () => {
   el<HTMLButtonElement>("new-tab").addEventListener("click", () => {
     void evoke().catch((err) => setStatus(String(err)));
+  });
+  el<HTMLButtonElement>("run-demo").addEventListener("click", () => {
+    void runVisualDemo().catch((err) => setStatus(String(err)));
   });
   el<HTMLButtonElement>("open-path").addEventListener("click", () => {
     void openPath();

@@ -10,6 +10,7 @@ Lightweight AI notepad core (internal).
 - **WUF-79** — ten-second Demo (`runTenSecondDemo`) + Windows floors (`runWindowsGates`)
 - **WUF-81** — Tauri desktop IPC facade (`IntentIpcHost` / `desktop/`) thin-wrapping IntentService
 - **WUF-83** — OS global hotkey (`Ctrl+Alt+N`) → evoke untitled Buffer (tabs kept)
+- **WUF-87** — visual ten-second Demo (`runVisualTenSecondDemo` / desktop **Demo**) + Windows cold-start/evoke smoke
 
 ## Offline editor ≠ offline AI (ADR-0003)
 
@@ -26,9 +27,10 @@ npm install
 npm test
 npm run build
 npm run notepad            # manual: evoke → paste → save
-npm run demo:ten-second    # M2: hotkey → paste → Intent → preview → Accept
-npm run gates:windows      # cold start / hotkey / large-file floors (Windows gate target)
-npm run desktop:dev        # Tauri window + IPC (Windows verification target)
+npm run demo:ten-second         # M2 in-process: hotkey → paste → Intent → preview → Accept
+npm run demo:visual-ten-second  # WUF-87 IPC seam (same path Tauri UI drives)
+npm run gates:windows           # cold start / hotkey / large-file floors (Windows gate target)
+npm run desktop:dev             # Tauri window + IPC (Windows verification target)
 ```
 
 ## Desktop (WUF-81)
