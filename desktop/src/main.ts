@@ -1,9 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   chooseSaveAction,
   pathInputValueForActive,
 } from "./path-toolbar.ts";
 import { formatPatchDiff, type Patch } from "./patch-diff.ts";
+
+/** Mirrors nova `GLOBAL_HOTKEY_ACCELERATOR` / Tauri registration. */
+const GLOBAL_HOTKEY_ACCELERATOR = "Ctrl+Alt+N";
+/** Mirrors nova `HOTKEY_EVOKE_EVENT`. */
+const HOTKEY_EVOKE_EVENT = "hotkey-evoke";
 
 type BufferSnapshot = {
   id: string;
@@ -464,6 +470,15 @@ async function closeActive() {
   }
 }
 
+async function onHotkeyEvoke(payload: ShellBufferResult) {
+  applyState(payload.buffer, payload.tabs);
+  clearPreviewPanel();
+  setStatus(
+    `Hotkey ${GLOBAL_HOTKEY_ACCELERATOR}: new untitled (${payload.buffer.id.slice(0, 8)}…)`,
+  );
+  el<HTMLTextAreaElement>("editor").focus();
+}
+
 function showCostAndOutbound(preview: Exclude<PreviewResult, { kind: "error" }>) {
   const meta = el<HTMLElement>("intent-meta");
   meta.hidden = false;
@@ -908,7 +923,6 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-
   el<HTMLButtonElement>("find-go").addEventListener("click", () => {
     void runFind();
   });
@@ -925,6 +939,16 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  void listen<ShellBufferResult>(HOTKEY_EVOKE_EVENT, (event) => {
+    void onHotkeyEvoke(event.payload);
+  }).catch((err) => setStatus(String(err)));
+
+  void listen<string>("hotkey-evoke-error", (event) => {
+    setStatus(`Hotkey evoke failed: ${event.payload}`);
+  }).catch(() => {
+    /* optional channel */
+  });
+
   void (async () => {
     try {
       const state = await invoke<{ enabled: boolean }>(
@@ -935,5 +959,11 @@ window.addEventListener("DOMContentLoaded", () => {
       el<HTMLInputElement>("suggestions-enabled").checked = false;
     }
     await evoke();
+    try {
+      const accel = await invoke<string>("get_global_hotkey_cmd");
+      setStatus(`Ready — global hotkey ${accel}`);
+    } catch {
+      setStatus(`Ready — global hotkey ${GLOBAL_HOTKEY_ACCELERATOR}`);
+    }
   })().catch((err) => setStatus(String(err)));
 });

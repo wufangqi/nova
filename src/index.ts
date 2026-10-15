@@ -28,6 +28,11 @@ export type {
   ValidateResult,
 } from "./model-gateway.js";
 export { EditorShell } from "./editor-shell.js";
+export {
+  GLOBAL_HOTKEY_ACCELERATOR,
+  HOTKEY_EVOKE_EVENT,
+  onGlobalHotkeyPressed,
+} from "./global-hotkey.js";
 export { FindBar } from "./find-bar.js";
 export { MojibakeRepair } from "./mojibake-repair.js";
 export {

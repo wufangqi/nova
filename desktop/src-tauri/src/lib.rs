@@ -9,7 +9,13 @@ use intent_bridge::{
 };
 use serde_json::Value;
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+/// Must match `GLOBAL_HOTKEY_ACCELERATOR` in nova `src/global-hotkey.ts`.
+const GLOBAL_HOTKEY_ACCELERATOR: &str = "Ctrl+Alt+N";
+
+/// Must match `HOTKEY_EVOKE_EVENT` in nova `src/global-hotkey.ts`.
+const HOTKEY_EVOKE_EVENT: &str = "hotkey-evoke";
 
 #[tauri::command]
 fn create_buffer_cmd(
@@ -104,6 +110,11 @@ fn get_shell_state_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, 
 }
 
 #[tauri::command]
+fn get_global_hotkey_cmd() -> String {
+    GLOBAL_HOTKEY_ACCELERATOR.to_string()
+}
+
+#[tauri::command]
 fn preview_intent_cmd(
     bridge: tauri::State<'_, SharedBridge>,
     utterance: String,
@@ -177,7 +188,6 @@ fn select_suggestion_cmd(
     select_suggestion(&bridge, suggestion, selection)
 }
 
-
 #[tauri::command]
 fn find_cmd(
     bridge: tauri::State<'_, SharedBridge>,
@@ -215,6 +225,27 @@ fn get_draft_cmd(bridge: tauri::State<'_, SharedBridge>) -> Result<Value, String
     get_draft(&bridge)
 }
 
+fn focus_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn evoke_from_hotkey(app: &tauri::AppHandle) {
+    focus_main_window(app);
+    let bridge = app.state::<SharedBridge>();
+    match evoke(&bridge) {
+        Ok(result) => {
+            let _ = app.emit(HOTKEY_EVOKE_EVENT, result);
+        }
+        Err(err) => {
+            let _ = app.emit("hotkey-evoke-error", err);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -224,6 +255,36 @@ pub fn run() {
                 std::io::Error::new(std::io::ErrorKind::Other, e)
             })?;
             app.manage(Mutex::new(bridge));
+
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_shortcuts([GLOBAL_HOTKEY_ACCELERATOR])
+                        .map_err(|e| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!(
+                                    "invalid global hotkey {GLOBAL_HOTKEY_ACCELERATOR}: {e}"
+                                ),
+                            )
+                        })?
+                        .with_handler(move |app, shortcut, event| {
+                            if event.state != ShortcutState::Pressed {
+                                return;
+                            }
+                            if !shortcut.matches(Modifiers::CONTROL | Modifiers::ALT, Code::KeyN)
+                            {
+                                return;
+                            }
+                            evoke_from_hotkey(app);
+                        })
+                        .build(),
+                )?;
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -240,6 +301,7 @@ pub fn run() {
             request_close_cmd,
             confirm_close_cmd,
             get_shell_state_cmd,
+            get_global_hotkey_cmd,
             preview_intent_cmd,
             reject_preview_cmd,
             undo_cmd,
