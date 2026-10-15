@@ -79,6 +79,7 @@ export {
   runWindowsGates,
   ensure100MbFixture,
   assertPackagedNativeLayout,
+  evaluateTyping100MbGate,
   LARGE_FILE_CHARS,
   FIXTURE_100MB_BYTES,
   COLD_START_MAX_MS,

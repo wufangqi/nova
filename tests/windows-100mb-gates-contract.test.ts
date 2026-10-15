@@ -13,6 +13,7 @@ import {
   TYPING_100MB_MAX_MS,
   assertPackagedNativeLayout,
   ensure100MbFixture,
+  evaluateTyping100MbGate,
   runWindowsGates,
 } from "../src/windows-gates.js";
 
@@ -47,6 +48,26 @@ describe("WUF-102 100MB fixture + packaged native layout", () => {
   });
 });
 
+describe("WUF-102 typing_100mb is not vacuous", () => {
+  it("fails when mid-buffer was not written even if timing is fine", () => {
+    const noWrite = evaluateTyping100MbGate(1, "LINE-");
+    assert.equal(noWrite.ok, false);
+    assert.match(noWrite.detail, /did not write|want "typed"/);
+  });
+
+  it("passes when mid reads back typed within budget", () => {
+    const ok = evaluateTyping100MbGate(1, "typed");
+    assert.equal(ok.ok, true);
+    assert.match(ok.detail, /typed/);
+  });
+
+  it("fails when typed is present but budget is exceeded", () => {
+    const slow = evaluateTyping100MbGate(TYPING_100MB_MAX_MS + 1, "typed");
+    assert.equal(slow.ok, false);
+    assert.match(slow.detail, /budget exceeded/);
+  });
+});
+
 describe("WUF-102 gates:windows suite", () => {
   it("passes open/typing/scroll/native alongside legacy floors", async () => {
     const report = await runWindowsGates();
@@ -63,5 +84,7 @@ describe("WUF-102 gates:windows suite", () => {
       assert.ok(g, `missing gate ${name}`);
       assert.equal(g!.ok, true, g!.detail);
     }
+    const typing = report.gates.find((g) => g.name === "typing_100mb")!;
+    assert.match(typing.detail, /"typed"/);
   });
 });

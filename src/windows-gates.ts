@@ -212,15 +212,9 @@ async function run100MbGates(
   const tType = performance.now();
   shell.editActiveRange(mid, mid, "typed");
   const typeMs = performance.now() - tType;
-  const typeOk = typeMs <= TYPING_100MB_MAX_MS;
-  const typingGate: GateResult = {
-    name: "typing_100mb",
-    ok: typeOk,
-    elapsedMs: typeMs,
-    detail: typeOk
-      ? `replaceRange mid ${typeMs.toFixed(1)}ms ≤ ${TYPING_100MB_MAX_MS}ms`
-      : `typing budget exceeded (${typeMs.toFixed(1)}ms > ${TYPING_100MB_MAX_MS}ms)`,
-  };
+  // Result assertion — timing alone can pass on a no-op; mid must read back "typed".
+  const midSlice = intent.slice(id, mid, mid + "typed".length);
+  const typingGate = evaluateTyping100MbGate(typeMs, midSlice);
 
   const lines = intent.lineCount(id);
   const start = Math.max(0, Math.floor(lines / 2) - 20);
@@ -279,6 +273,33 @@ export function assertPackagedNativeLayout(resourcesRoot: string): boolean {
   const fakeModuleDir = join(resourcesRoot, "nova-dist");
   const addon = resolveNativeAddonPath(fakeModuleDir);
   return existsSync(addon);
+}
+
+/**
+ * Typing gate verdict: must be within budget **and** mid-buffer must contain
+ * the inserted `"typed"`. Timing-only green on a no-op write is a vacuous pass.
+ */
+export function evaluateTyping100MbGate(
+  typeMs: number,
+  midSlice: string,
+): GateResult {
+  const wrote = midSlice === "typed";
+  const withinBudget = typeMs <= TYPING_100MB_MAX_MS;
+  const ok = wrote && withinBudget;
+  let detail: string;
+  if (ok) {
+    detail = `replaceRange mid ${typeMs.toFixed(1)}ms ≤ ${TYPING_100MB_MAX_MS}ms; mid=${JSON.stringify(midSlice)}`;
+  } else if (!wrote) {
+    detail = `typing did not write mid content (got ${JSON.stringify(midSlice)}, want "typed")`;
+  } else {
+    detail = `typing budget exceeded (${typeMs.toFixed(1)}ms > ${TYPING_100MB_MAX_MS}ms); mid ok`;
+  }
+  return {
+    name: "typing_100mb",
+    ok,
+    elapsedMs: typeMs,
+    detail,
+  };
 }
 
 /** Run Windows floors; safe to invoke from CI on any platform. */
