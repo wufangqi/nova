@@ -134,6 +134,30 @@ export class VirtualEditor {
     return sel;
   }
 
+  /** Total line count last synced from the host (0 when unbound). */
+  get lineCountSnapshot(): number {
+    return this.totalLines;
+  }
+
+  /**
+   * Caret + mounted window fields for status-metrics (pure mapper inputs).
+   * Null when no Buffer is bound.
+   */
+  caretWindowContext(): {
+    windowText: string;
+    windowLineStart: number;
+    windowStartOffset: number;
+    caretOffset: number;
+  } | null {
+    if (!this.bufferId) return null;
+    return {
+      windowText: this.localText,
+      windowLineStart: this.firstLine,
+      windowStartOffset: this.windowStartOffset,
+      caretOffset: this.windowStartOffset + this.textarea.selectionStart,
+    };
+  }
+
   async bind(
     bufferId: string | null,
     revision: number | undefined,

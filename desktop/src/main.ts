@@ -34,6 +34,12 @@ import {
   type ShellChromeHandlers,
 } from "./shell-chrome.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
+import {
+  caretLineColumnInWindow,
+  formatStatusMetrics,
+  mapStatusMetrics,
+  type StatusMetrics,
+} from "./status-metrics.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
 import { runWindowQuitRecovery } from "./window-quit.ts";
 
@@ -461,6 +467,57 @@ function setStatus(message: string) {
   el<HTMLElement>("status").textContent = message;
 }
 
+function renderStatusMetrics(metrics: StatusMetrics) {
+  const labels = formatStatusMetrics(metrics);
+  const root = el<HTMLElement>("status-metrics");
+  for (const key of Object.keys(labels) as (keyof typeof labels)[]) {
+    const span = root.querySelector(`[data-metric="${key}"] .metric-value`);
+    if (span) span.textContent = labels[key];
+  }
+}
+
+let metricsRefreshToken = 0;
+
+/** Refresh right-hand metrics from Buffer len/lines + caret (left status untouched). */
+async function refreshStatusMetrics() {
+  const token = ++metricsRefreshToken;
+  if (!activeId) {
+    renderStatusMetrics(
+      mapStatusMetrics({
+        hasBuffer: false,
+        length: 0,
+        lineCount: 0,
+        caretOffset: null,
+        caretLine: null,
+        caretColumn: null,
+      }),
+    );
+    return;
+  }
+  let length = 0;
+  try {
+    const lenRes = await invoke<{ len: number }>("buffer_len_cmd", {
+      id: activeId,
+    });
+    length = lenRes.len;
+  } catch {
+    length = 0;
+  }
+  if (token !== metricsRefreshToken) return;
+  const ctx = virtualEditor.caretWindowContext();
+  const pos = ctx ? caretLineColumnInWindow(ctx) : null;
+  renderStatusMetrics(
+    mapStatusMetrics({
+      hasBuffer: true,
+      length,
+      lineCount: virtualEditor.lineCountSnapshot,
+      caretOffset: ctx?.caretOffset ?? null,
+      caretLine: pos?.line ?? null,
+      caretColumn: pos?.column ?? null,
+    }),
+  );
+}
+
 async function sliceActive(start: number, end: number): Promise<string> {
   if (!activeId || start === end) return "";
   const result = await invoke<{ text: string }>("slice_cmd", { id: activeId, start, end });
@@ -561,6 +618,7 @@ async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
   const active = tabs.find((t) => t.active);
   // Always sync — untitled must clear so Save cannot reuse another tab's Path.
   pathInput.value = pathInputValueForActive(active);
+  await refreshStatusMetrics();
 }
 
 function editorSelection():
@@ -750,6 +808,7 @@ async function gotoLine() {
   }
   await virtualEditor.gotoLine(line);
   setStatus(`Went to line ${line}`);
+  await refreshStatusMetrics();
 }
 
 async function openPath() {
@@ -1541,12 +1600,25 @@ window.addEventListener("DOMContentLoaded", () => {
         });
         renderTabs(result.tabs);
         activeId = result.buffer.id;
+        void refreshStatusMetrics();
         return { revision: result.buffer.revision };
       },
     },
   );
-  el<HTMLTextAreaElement>("editor").addEventListener("paste", (ev) => {
+  const editorEl = el<HTMLTextAreaElement>("editor");
+  editorEl.addEventListener("paste", (ev) => {
     void onEditorPaste(ev);
+  });
+  // Caret moves update 行/列/位置 without touching the left status message.
+  for (const evt of ["keyup", "click", "select", "input"] as const) {
+    editorEl.addEventListener(evt, () => {
+      void refreshStatusMetrics();
+    });
+  }
+  document.addEventListener("selectionchange", () => {
+    if (document.activeElement === editorEl) {
+      void refreshStatusMetrics();
+    }
   });
   el<HTMLButtonElement>("goto-line-go").addEventListener("click", () => {
     void gotoLine();
