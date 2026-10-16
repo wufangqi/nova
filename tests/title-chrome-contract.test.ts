@@ -10,8 +10,11 @@ import {
   copyPathFromTitle,
   formatTitle,
   handleTitleClick,
+  onTitleClose,
   onTitleDoubleClick,
   onTitleDragThreshold,
+  onTitleMaximize,
+  onTitleMinimize,
   syncWindowTitle,
   titleChromeFeedback,
   type TitleChromeState,
@@ -132,30 +135,42 @@ describe("handleTitleClick — clipboard write only when Path exists", () => {
   });
 });
 
+function recordingWindowPort(calls: string[]) {
+  return {
+    startDragging: () => {
+      calls.push("drag");
+    },
+    toggleMaximize: () => {
+      calls.push("toggle");
+    },
+    minimize: () => {
+      calls.push("minimize");
+    },
+    close: () => {
+      calls.push("close");
+    },
+  };
+}
+
 describe("title region window gestures (port, no OS pixels)", () => {
   it("double-click toggles maximize via the window port", async () => {
     const calls: string[] = [];
-    await onTitleDoubleClick({
-      startDragging: () => {
-        calls.push("drag");
-      },
-      toggleMaximize: () => {
-        calls.push("toggle");
-      },
-    });
+    await onTitleDoubleClick(recordingWindowPort(calls));
     assert.deepEqual(calls, ["toggle"]);
   });
 
   it("drag threshold starts window move via the window port", async () => {
     const calls: string[] = [];
-    await onTitleDragThreshold({
-      startDragging: () => {
-        calls.push("drag");
-      },
-      toggleMaximize: () => {
-        calls.push("toggle");
-      },
-    });
+    await onTitleDragThreshold(recordingWindowPort(calls));
     assert.deepEqual(calls, ["drag"]);
+  });
+
+  it("caption buttons map to minimize / maximize / close", async () => {
+    const calls: string[] = [];
+    const win = recordingWindowPort(calls);
+    await onTitleMinimize(win);
+    await onTitleMaximize(win);
+    await onTitleClose(win);
+    assert.deepEqual(calls, ["minimize", "toggle", "close"]);
   });
 });

@@ -48,6 +48,9 @@ export type TitleChromeClipboardHost = {
 export type TitleChromeWindowPort = {
   startDragging(): void | Promise<void>;
   toggleMaximize(): void | Promise<void>;
+  minimize(): void | Promise<void>;
+  /** Soft close — should emit close-requested (Recovery path), not force-destroy. */
+  close(): void | Promise<void>;
 };
 
 /** Keep OS/taskbar title in lockstep with the in-app title string. */
@@ -86,6 +89,25 @@ export async function onTitleDragThreshold(
   win: TitleChromeWindowPort,
 ): Promise<void> {
   await win.startDragging();
+}
+
+/** Caption-button: minimize (undecorated window must provide its own). */
+export async function onTitleMinimize(
+  win: TitleChromeWindowPort,
+): Promise<void> {
+  await win.minimize();
+}
+
+/** Caption-button: maximize / restore. */
+export async function onTitleMaximize(
+  win: TitleChromeWindowPort,
+): Promise<void> {
+  await win.toggleMaximize();
+}
+
+/** Caption-button: close via soft close (RecoveryBuffer quit path). */
+export async function onTitleClose(win: TitleChromeWindowPort): Promise<void> {
+  await win.close();
 }
 
 /** Pixels of movement before a press becomes a window drag (not a click). */

@@ -60,6 +60,36 @@ body {
   background: #7a5a3a;
 }
 
+.title-chrome-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  margin: -0.2rem -0.65rem -0.2rem 0.25rem;
+  margin-left: auto;
+}
+
+.title-chrome-btn {
+  min-width: 2.75rem;
+  padding: 0.35rem 0.7rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #f3f1ec;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: default;
+}
+
+.title-chrome-btn:hover {
+  background: #444;
+}
+
+.title-chrome-btn-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
 .menubar {
   display: flex;
   align-items: stretch;

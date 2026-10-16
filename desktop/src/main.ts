@@ -48,8 +48,11 @@ import {
   TITLE_DRAG_THRESHOLD_PX,
   formatTitle,
   handleTitleClick,
+  onTitleClose,
   onTitleDoubleClick,
   onTitleDragThreshold,
+  onTitleMaximize,
+  onTitleMinimize,
   syncWindowTitle,
   titleChromeFeedback,
   titleChromeStateFromTab,
@@ -642,6 +645,8 @@ function titleWindowPort(): TitleChromeWindowPort {
   return {
     startDragging: () => win.startDragging(),
     toggleMaximize: () => win.toggleMaximize(),
+    minimize: () => win.minimize(),
+    close: () => win.close(),
   };
 }
 
@@ -729,6 +734,32 @@ function mountTitleChrome() {
   region.addEventListener("pointercancel", () => {
     press = null;
   });
+
+  // Caption buttons (decorations:false) — must not trigger title copy/drag.
+  const controls = document.getElementById("title-chrome-controls");
+  if (controls) {
+    for (const type of ["pointerdown", "pointerup", "click", "dblclick"] as const) {
+      controls.addEventListener(type, (ev) => {
+        ev.stopPropagation();
+      });
+    }
+  }
+  const bindCaption = (
+    id: string,
+    run: (win: TitleChromeWindowPort) => Promise<void>,
+  ) => {
+    const btn = document.getElementById(id);
+    if (!(btn instanceof HTMLButtonElement)) return;
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      press = null;
+      void run(titleWindowPort()).catch((err) => setStatus(String(err)));
+    });
+  };
+  bindCaption("win-minimize", onTitleMinimize);
+  bindCaption("win-maximize", onTitleMaximize);
+  bindCaption("win-close", onTitleClose);
 }
 
 async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
