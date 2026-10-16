@@ -17,9 +17,47 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto auto auto auto;
   min-height: 100vh;
   position: relative;
+}
+
+.title-chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2rem;
+  padding: 0.2rem 0.65rem;
+  background: #2f2f2f;
+  color: #f3f1ec;
+  border-bottom: 1px solid #1a1a1a;
+  user-select: none;
+  cursor: default;
+}
+
+.title-chrome-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 0.92rem;
+  letter-spacing: 0.01em;
+}
+
+.title-chrome-feedback {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.45rem;
+  border-radius: 2px;
+  background: #4a7c59;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.title-chrome-feedback[data-kind="no_path"] {
+  background: #7a5a3a;
 }
 
 .menubar {
@@ -92,39 +130,51 @@ body {
   font-size: 0.85em;
 }
 
-.toolbar {
+.about-dialog {
+  padding: 0;
+  border: 1px solid #8a8478;
+  border-radius: 4px;
+  background: #f7f5f0;
+  color: #1c1c1c;
+  box-shadow: 0 4px 18px rgba(28, 28, 28, 0.18);
+  max-width: 22rem;
+}
+
+.about-dialog::backdrop {
+  background: rgba(28, 28, 28, 0.35);
+}
+
+.about-form {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-  padding: 0.55rem 0.75rem;
-  background: #dcd7cd;
-  border-bottom: 1px solid #bdb7aa;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 1rem 1.15rem 0.9rem;
 }
 
-.path-field {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  flex: 1 1 14rem;
-  min-width: 12rem;
-  font-weight: 600;
+.about-title {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
 }
 
-.path-field input {
-  flex: 1;
-  min-width: 0;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid #a9a296;
-  border-radius: 3px;
-  background: #f3f1ec;
-  color: #3a3a3a;
-  font: inherit;
-  cursor: default;
+.about-name {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
 }
 
-.path-field input[readonly] {
-  user-select: text;
+.about-version {
+  margin: 0;
+  opacity: 0.75;
+  font-size: 0.9rem;
+}
+
+.about-blurb {
+  margin: 0.35rem 0 0.6rem;
+  line-height: 1.45;
+}
+
+.about-ok {
+  align-self: flex-end;
 }
 
 button {
@@ -247,14 +297,24 @@ button.close-prompt-secondary {
   border-color: #8a7f6a;
 }
 
-.editor-chrome {
+.goto-line-popup {
+  position: absolute;
+  z-index: 25;
+  top: 3.4rem;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
   align-items: center;
-  padding: 0.35rem 0.75rem;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
   background: #e8e4db;
-  border-bottom: 1px solid #bdb7aa;
+  border: 1px solid #8a8478;
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(28, 28, 28, 0.16);
+}
+
+.goto-line-popup[hidden] {
+  display: none !important;
 }
 
 .goto-field {
@@ -292,20 +352,50 @@ button.close-prompt-secondary {
   left: 0;
   right: 0;
   top: 0;
+  /* Stretch to viewport width — without width/min-width, abspos can shrink-to-fit
+     the textarea intrinsic cols (~200px) and leave a large blank right half. */
+  width: 100%;
+  min-width: 100%;
+}
+
+/* WUF-116: absolute overlay so .editor keeps width:100% (half-width chain intact). */
+.line-gutter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  min-width: 2.75rem;
+  padding: 0.85rem 0.45rem 0.85rem 0.35rem;
+  text-align: right;
+  pointer-events: none;
+  user-select: none;
+  background: #f3f1ec;
+  border-right: 1px solid #e4e0d8;
+  color: #8a857c;
+  font: 15px/22px "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+}
+
+.line-gutter-row {
+  height: 22px;
+  line-height: 22px;
 }
 
 .editor {
   display: block;
   width: 100%;
+  min-width: 100%;
   min-height: 16rem;
   margin: 0;
-  padding: 0.85rem 1rem;
+  /* Left padding clears the gutter overlay so text stays readable. */
+  padding: 0.85rem 1rem 0.85rem 3.4rem;
   border: 0;
   resize: none;
   overflow: hidden;
   background: #fff;
   font: 15px/22px "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
   color: inherit;
+  /* Soft wrap stays off: virtual scroll line height assumes one Buffer line per row. */
   white-space: pre;
   tab-size: 4;
 }
@@ -629,11 +719,38 @@ button.close-prompt-secondary {
   padding: 0.25rem 0.55rem;
 }
 
-.status {
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   margin: 0;
-  padding: 0.4rem 0.75rem;
+  padding: 0.35rem 0.75rem;
   background: #dcd7cd;
   border-top: 1px solid #bdb7aa;
   color: #3d3d3d;
   min-height: 1.6rem;
+  box-sizing: border-box;
+}
+
+/* Transient messages shrink; never paint over the fixed metrics. */
+.status-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-metrics {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status-metrics .metric-value {
+  font-weight: 550;
 }

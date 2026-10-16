@@ -10,50 +10,55 @@
 
   <body>
     <div class="app">
+      <header class="title-chrome" id="title-chrome" aria-label="Window title">
+        <div class="title-chrome-label" id="title-chrome-label">Nova Untitled</div>
+        <span class="title-chrome-feedback" id="title-chrome-feedback" hidden></span>
+      </header>
       <nav class="menubar" aria-label="Menu">
         <details class="menu" id="file-menu">
           <summary>File</summary>
           <ul role="menu" id="file-menu-list"></ul>
         </details>
+        <details class="menu" id="help-menu">
+          <summary>Help</summary>
+          <ul role="menu" id="help-menu-list"></ul>
+        </details>
       </nav>
-      <header class="toolbar">
-        <button type="button" id="new-tab" data-shell-action="new">New</button>
-        <button
-          type="button"
-          id="run-demo"
-          data-shell-action="demo"
-          title="Visual ten-second Demo: new Buffer → paste → Intent → diff → Accept"
-        >
-          Demo
-        </button>
-        <label class="path-field">
-          <span>Path</span>
-          <input
-            id="path-input"
-            type="text"
-            readonly
-            placeholder="(untitled)"
-            spellcheck="false"
-            title="Path is display-only — use Open / Save / Save As"
-          />
-        </label>
-        <button type="button" id="open-path" data-shell-action="open">Open</button>
-        <button type="button" id="save" data-shell-action="save">Save</button>
-        <button type="button" id="save-as" data-shell-action="save_as">Save As</button>
-        <button
-          type="button"
-          id="find-open"
-          data-shell-action="find"
-          title="Find (Ctrl+F)"
-        >
-          Find
-        </button>
-        <button type="button" id="close-tab">Close</button>
-      </header>
 
       <nav id="tab-bar" class="tab-bar" aria-label="Buffers"></nav>
 
-      <div class="editor-chrome">
+      <div
+        id="editor-viewport"
+        class="editor-viewport"
+        aria-label="Virtual editor"
+      >
+        <div id="editor-spacer" class="editor-spacer"></div>
+        <div id="editor-window" class="editor-window">
+          <div
+            id="line-gutter"
+            class="line-gutter"
+            aria-hidden="true"
+          ></div>
+          <textarea
+            id="editor"
+            class="editor"
+            wrap="off"
+            spellcheck="false"
+            placeholder="Untitled Buffer — start typing"
+            disabled
+          ></textarea>
+        </div>
+      </div>
+
+      <!-- Ctrl+G mini goto-line popup: Enter jumps / Esc dismisses. -->
+      <div
+        id="goto-line-popup"
+        class="goto-line-popup"
+        role="dialog"
+        aria-modal="false"
+        aria-label="Go to line"
+        hidden
+      >
         <label class="goto-field" title="Jump to line without loading full text">
           <span>Go to line</span>
           <input
@@ -65,24 +70,6 @@
             spellcheck="false"
           />
         </label>
-        <button type="button" id="goto-line-go">Go</button>
-      </div>
-
-      <div
-        id="editor-viewport"
-        class="editor-viewport"
-        aria-label="Virtual editor"
-      >
-        <div id="editor-spacer" class="editor-spacer"></div>
-        <div id="editor-window" class="editor-window">
-          <textarea
-            id="editor"
-            class="editor"
-            spellcheck="false"
-            placeholder="Untitled Buffer — start typing"
-            disabled
-          ></textarea>
-        </div>
       </div>
 
       <!-- Modeless Find dialog: not showModal — editor stays editable while open. -->
@@ -205,7 +192,41 @@ placeholder="e.g. uppercase / regex a(\d) / explain this"
         <ul id="action-list" class="action-list" aria-live="polite"></ul>
       </section>
 
-      <p id="status" class="status" aria-live="polite"></p>
+      <footer class="status-bar" aria-label="Status">
+        <p id="status" class="status-message" aria-live="polite"></p>
+        <div
+          id="status-metrics"
+          class="status-metrics"
+          aria-label="Buffer metrics"
+        >
+          <span data-metric="length"
+            >长度 <span class="metric-value">0</span></span
+          >
+          <span data-metric="lineCount"
+            >行数 <span class="metric-value">0</span></span
+          >
+          <span data-metric="line"
+            >行 <span class="metric-value">—</span></span
+          >
+          <span data-metric="column"
+            >列 <span class="metric-value">—</span></span
+          >
+          <span data-metric="offset"
+            >位置 <span class="metric-value">—</span></span
+          >
+        </div>
+      </footer>
+
+      <!-- Help → About: name + version from app config + short blurb. -->
+      <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-title">
+        <form method="dialog" class="about-form">
+          <h2 id="about-title" class="about-title">About</h2>
+          <p class="about-name" id="about-name"></p>
+          <p class="about-version" id="about-version"></p>
+          <p class="about-blurb" id="about-blurb"></p>
+          <button type="submit" value="ok" class="about-ok">OK</button>
+        </form>
+      </dialog>
     </div>
   </body>
 </html>

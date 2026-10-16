@@ -1,14 +1,23 @@
 /**
- * WUF-108 — compact shell chrome: toolbar + simple File menu + shortcuts.
+ * WUF-115 — menu-first shell chrome: File + Help menus, shortcuts, no toolbar.
  *
- * Toolbar buttons, File menu items, and Ctrl+N/O/S/Shift+S/F share one action
- * table so every entry has the same effect. Demo stays a toolbar-only action.
- * Encoding / Language menus are deferred (not part of this Stage).
+ * File menu + Ctrl+N/O/S/Shift+S/F share one action table.
+ * Help menu exposes Demo… and About (version from app config).
+ * Ctrl+W closes the active tab via the same handler as the tab × (three-way dirty).
+ * No File → Close. Encoding / Language menus remain deferred.
  */
 
 export type ShellFileAction = "new" | "open" | "save" | "save_as" | "find";
 
-export type ShellChromeAction = ShellFileAction | "demo";
+export type ShellHelpAction = "demo" | "about";
+
+/** Tab close — keyboard only; not listed on File or Help. */
+export type ShellCloseAction = "close";
+
+export type ShellChromeAction =
+  | ShellFileAction
+  | ShellHelpAction
+  | ShellCloseAction;
 
 export type ShellFileMenuItem = {
   id: ShellFileAction;
@@ -16,7 +25,13 @@ export type ShellFileMenuItem = {
   accelerator: string;
 };
 
-/** File menu entries — mirrors toolbar file actions, nothing else. */
+export type ShellHelpMenuItem = {
+  id: ShellHelpAction;
+  label: string;
+  accelerator?: string;
+};
+
+/** File menu entries — file ops only; never Close. */
 export const SHELL_FILE_MENU_ITEMS: readonly ShellFileMenuItem[] = [
   { id: "new", label: "New", accelerator: "Ctrl+N" },
   { id: "open", label: "Open…", accelerator: "Ctrl+O" },
@@ -25,15 +40,44 @@ export const SHELL_FILE_MENU_ITEMS: readonly ShellFileMenuItem[] = [
   { id: "find", label: "Find…", accelerator: "Ctrl+F" },
 ] as const;
 
-/** Toolbar file actions — same set / order as the File menu. */
-export const SHELL_TOOLBAR_FILE_ACTIONS: readonly ShellFileAction[] =
-  SHELL_FILE_MENU_ITEMS.map((item) => item.id);
+/** Help menu — Demo + About; Demo is not on the File menu. */
+export const SHELL_HELP_MENU_ITEMS: readonly ShellHelpMenuItem[] = [
+  { id: "demo", label: "Demo…" },
+  { id: "about", label: "About" },
+] as const;
 
-/** Demo remains reachable on the toolbar; not part of the File menu. */
-export const SHELL_DEMO_ACTION = "demo" as const;
+/** Ctrl+W accelerator for the shared tab-close path. */
+export const SHELL_CLOSE_ACCELERATOR = "Ctrl+W" as const;
 
-/** Productized later — must not appear in this Stage's File menu. */
+/** Productized later — must not appear in this Stage's menus. */
 export const SHELL_DEFERRED_MENU_LABELS = ["Encoding", "Language"] as const;
+
+/**
+ * About modal content. Version must come from app package / Tauri config
+ * (same string the release build ships), not a hard-coded UI literal elsewhere.
+ */
+export type AboutInfo = {
+  name: string;
+  version: string;
+  blurb: string;
+};
+
+export type AppVersionConfig = {
+  productName: string;
+  version: string;
+};
+
+const DEFAULT_ABOUT_BLURB =
+  "AI-native notepad — Buffer-centric editing with Intent and Actions.";
+
+/** Map app config → About modal fields. */
+export function aboutInfoFromConfig(config: AppVersionConfig): AboutInfo {
+  return {
+    name: config.productName,
+    version: config.version,
+    blurb: DEFAULT_ABOUT_BLURB,
+  };
+}
 
 export type ShellChromeHandlers = {
   [K in ShellChromeAction]: () => void | Promise<void>;
@@ -48,12 +92,12 @@ export type ShellShortcutEvent = {
 };
 
 /**
- * Map a key event to a file chrome action.
+ * Map a key event to a chrome action (file ops or Ctrl+W close).
  * Requires Ctrl (not Alt/Meta) so Ctrl+Alt+N global evoke stays distinct.
  */
 export function resolveShellShortcut(
   ev: ShellShortcutEvent,
-): ShellFileAction | null {
+): ShellFileAction | ShellCloseAction | null {
   if (!ev.ctrlKey || ev.altKey || ev.metaKey) return null;
   const key = ev.key.toLowerCase();
   if (key === "n" && !ev.shiftKey) return "new";
@@ -61,6 +105,7 @@ export function resolveShellShortcut(
   if (key === "s" && !ev.shiftKey) return "save";
   if (key === "s" && ev.shiftKey) return "save_as";
   if (key === "f" && !ev.shiftKey) return "find";
+  if (key === "w" && !ev.shiftKey) return "close";
   return null;
 }
 

@@ -1,16 +1,18 @@
 /**
- * WUF-108 contract: toolbar + simple File menu + shortcuts share one action table.
+ * WUF-115 contract: menu-first shell — File + Help menus, shortcuts, Ctrl+W.
  *
  * Seam: shell-chrome (desktop/src/shell-chrome.ts).
- * No real OS menu/dialog pixels; no Encoding/Language menu expansion.
+ * No toolbar action table. No real OS menu/dialog pixels; no Encoding/Language.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { APP_PRODUCT_NAME, APP_VERSION } from "../desktop/src/app-meta.ts";
 import {
-  SHELL_DEMO_ACTION,
+  SHELL_CLOSE_ACCELERATOR,
   SHELL_DEFERRED_MENU_LABELS,
   SHELL_FILE_MENU_ITEMS,
-  SHELL_TOOLBAR_FILE_ACTIONS,
+  SHELL_HELP_MENU_ITEMS,
+  aboutInfoFromConfig,
   resolveShellShortcut,
   runShellAction,
   shouldDismissDetailsMenu,
@@ -43,24 +45,32 @@ function recordingHandlers(): ShellChromeHandlers & {
     demo: () => {
       calls.push("demo");
     },
+    about: () => {
+      calls.push("about");
+    },
+    close: () => {
+      calls.push("close");
+    },
   } satisfies ShellChromeHandlers & { calls: ShellChromeAction[] };
   return handlers;
 }
 
-describe("toolbar and File menu expose the same file actions", () => {
+describe("File menu + shortcuts (no toolbar table)", () => {
   it("File menu lists New / Open / Save / Save As / Find", () => {
     const ids = SHELL_FILE_MENU_ITEMS.map((item) => item.id);
     assert.deepEqual(ids, ["new", "open", "save", "save_as", "find"]);
   });
 
-  it("toolbar file actions match the File menu set (same effect surface)", () => {
-    assert.deepEqual(
-      [...SHELL_TOOLBAR_FILE_ACTIONS],
-      SHELL_FILE_MENU_ITEMS.map((item) => item.id),
+  it("File menu does not include Close", () => {
+    assert.equal(
+      SHELL_FILE_MENU_ITEMS.some(
+        (item) => item.id === ("close" as string) || item.label === "Close",
+      ),
+      false,
     );
   });
 
-  it("toolbar, menu, and shortcut invoke the same handler for each file action", () => {
+  it("menu and shortcut invoke the same handler for each file action", () => {
     const actions: ShellFileAction[] = [
       "new",
       "open",
@@ -70,7 +80,7 @@ describe("toolbar and File menu expose the same file actions", () => {
     ];
     for (const action of actions) {
       const handlers = recordingHandlers();
-      runShellAction(action, handlers); // toolbar / menu path
+      runShellAction(action, handlers); // menu path
       const shortcut = SHELL_FILE_MENU_ITEMS.find((i) => i.id === action)!;
       const resolved = resolveShellShortcut(
         parseAccelerator(shortcut.accelerator),
@@ -150,7 +160,51 @@ describe("Ctrl+N / O / S / Shift+S / F shortcuts", () => {
   });
 });
 
-describe("File menu dismisses on outside pointer", () => {
+describe("Ctrl+W shares the tab-close action path", () => {
+  it("maps Ctrl+W to close (same action tab × handlers run)", () => {
+    assert.equal(SHELL_CLOSE_ACCELERATOR, "Ctrl+W");
+    const resolved = resolveShellShortcut(parseAccelerator(SHELL_CLOSE_ACCELERATOR));
+    assert.equal(resolved, "close");
+  });
+
+  it("runShellAction(close) hits the shared close handler", () => {
+    const handlers = recordingHandlers();
+    runShellAction("close", handlers);
+    assert.deepEqual(handlers.calls, ["close"]);
+  });
+});
+
+describe("Help menu: Demo… and About", () => {
+  it("Help lists Demo… and About; Demo is not on File", () => {
+    assert.deepEqual(
+      SHELL_HELP_MENU_ITEMS.map((item) => item.id),
+      ["demo", "about"],
+    );
+    assert.equal(
+      SHELL_FILE_MENU_ITEMS.some((item) => item.id === "demo"),
+      false,
+    );
+  });
+
+  it("Help Demo and About dispatch through the shared handler table", () => {
+    const handlers = recordingHandlers();
+    runShellAction("demo", handlers);
+    runShellAction("about", handlers);
+    assert.deepEqual(handlers.calls, ["demo", "about"]);
+  });
+
+  it("About info takes name and version from app config", () => {
+    const info = aboutInfoFromConfig({
+      productName: APP_PRODUCT_NAME,
+      version: APP_VERSION,
+    });
+    assert.equal(info.name, APP_PRODUCT_NAME);
+    assert.equal(info.version, APP_VERSION);
+    assert.ok(info.blurb.length > 0);
+  });
+});
+
+describe("menus dismiss on outside pointer", () => {
   it("does not dismiss when closed or when target is inside the menu", () => {
     const inside = { nodeType: 1 } as unknown as Node;
     const menu = {
@@ -174,20 +228,12 @@ describe("File menu dismisses on outside pointer", () => {
   });
 });
 
-describe("Demo stays reachable; no Encoding/Language expansion", () => {
-  it("Demo is a chrome action outside the File menu", () => {
-    assert.equal(SHELL_DEMO_ACTION, "demo");
-    assert.equal(
-      SHELL_FILE_MENU_ITEMS.some((item) => item.id === "demo"),
-      false,
-    );
-    const handlers = recordingHandlers();
-    runShellAction("demo", handlers);
-    assert.deepEqual(handlers.calls, ["demo"]);
-  });
-
-  it("File menu does not include Encoding or Language", () => {
-    const labels = SHELL_FILE_MENU_ITEMS.map((item) => item.label);
+describe("no Encoding/Language expansion", () => {
+  it("File and Help menus do not include Encoding or Language", () => {
+    const labels = [
+      ...SHELL_FILE_MENU_ITEMS.map((item) => item.label),
+      ...SHELL_HELP_MENU_ITEMS.map((item) => item.label),
+    ];
     for (const deferred of SHELL_DEFERRED_MENU_LABELS) {
       assert.equal(
         labels.some((label) => label === deferred || label.startsWith(deferred)),

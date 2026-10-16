@@ -23,17 +23,39 @@ import {
   type FindDialogPort,
   type FindDialogSurface,
 } from "./find-dialog.ts";
-import { pathInputValueForActive } from "./path-toolbar.ts";
+import { APP_PRODUCT_NAME, APP_VERSION } from "./app-meta.ts";
+import { GotoLinePopup, type GotoLinePopupSurface } from "./goto-line-popup.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
 import { closeTabWithPrompter, type TabClosePort } from "./tab-close.ts";
 import {
   SHELL_FILE_MENU_ITEMS,
+  SHELL_HELP_MENU_ITEMS,
+  aboutInfoFromConfig,
   resolveShellShortcut,
   runShellAction,
   shouldDismissDetailsMenu,
+  type ShellChromeAction,
   type ShellChromeHandlers,
 } from "./shell-chrome.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
+import {
+  caretLineColumnInWindow,
+  formatStatusMetrics,
+  mapStatusMetrics,
+  type StatusMetrics,
+} from "./status-metrics.ts";
+import {
+  TITLE_DRAG_THRESHOLD_PX,
+  formatTitle,
+  handleTitleClick,
+  onTitleDoubleClick,
+  onTitleDragThreshold,
+  syncWindowTitle,
+  titleChromeFeedback,
+  titleChromeStateFromTab,
+  type TitleChromeState,
+  type TitleChromeWindowPort,
+} from "./title-chrome.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
 import { runWindowQuitRecovery } from "./window-quit.ts";
 
@@ -451,6 +473,7 @@ let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
 let virtualEditor: VirtualEditor;
+let gotoLinePopup: GotoLinePopup;
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing #${id}`);
@@ -459,6 +482,63 @@ function el<T extends HTMLElement>(id: string): T {
 
 function setStatus(message: string) {
   el<HTMLElement>("status").textContent = message;
+}
+
+function renderStatusMetrics(metrics: StatusMetrics) {
+  const labels = formatStatusMetrics(metrics);
+  const root = el<HTMLElement>("status-metrics");
+  for (const key of Object.keys(labels) as (keyof typeof labels)[]) {
+    const span = root.querySelector(`[data-metric="${key}"] .metric-value`);
+    if (span) span.textContent = labels[key];
+  }
+}
+
+let metricsRefreshToken = 0;
+
+/** Refresh right-hand metrics from Buffer len/lines + caret (left status untouched). */
+async function refreshStatusMetrics() {
+  const token = ++metricsRefreshToken;
+  if (!activeId) {
+    renderStatusMetrics(
+      mapStatusMetrics({
+        hasBuffer: false,
+        length: 0,
+        lineCount: 0,
+        caretOffset: null,
+        caretLine: null,
+        caretColumn: null,
+      }),
+    );
+    return;
+  }
+  // Length and lineCount from the same IPC host so edits refresh both immediately
+  // (VirtualEditor.totalLines may still be stale until flushEdit finishes).
+  let length = 0;
+  let lineCount = 0;
+  try {
+    const [lenRes, linesRes] = await Promise.all([
+      invoke<{ len: number }>("buffer_len_cmd", { id: activeId }),
+      invoke<{ lineCount: number }>("buffer_line_count_cmd", { id: activeId }),
+    ]);
+    length = lenRes.len;
+    lineCount = linesRes.lineCount;
+  } catch {
+    length = 0;
+    lineCount = 0;
+  }
+  if (token !== metricsRefreshToken) return;
+  const ctx = virtualEditor.caretWindowContext();
+  const pos = ctx ? caretLineColumnInWindow(ctx) : null;
+  renderStatusMetrics(
+    mapStatusMetrics({
+      hasBuffer: true,
+      length,
+      lineCount,
+      caretOffset: ctx?.caretOffset ?? null,
+      caretLine: pos?.line ?? null,
+      caretColumn: pos?.column ?? null,
+    }),
+  );
 }
 
 async function sliceActive(start: number, end: number): Promise<string> {
@@ -553,14 +633,111 @@ function renderTabs(tabs: TabInfo[]) {
   }
 }
 
+let currentTitleState: TitleChromeState = { path: null, dirty: false };
+let titleFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+let titleClickSuppressUntil = 0;
+
+function titleWindowPort(): TitleChromeWindowPort {
+  const win = getCurrentWindow();
+  return {
+    startDragging: () => win.startDragging(),
+    toggleMaximize: () => win.toggleMaximize(),
+  };
+}
+
+function showTitleFeedback(text: string, kind: "copied" | "no_path") {
+  const chip = document.getElementById("title-chrome-feedback");
+  if (!chip) return;
+  chip.textContent = text;
+  chip.hidden = false;
+  chip.dataset.kind = kind;
+  if (titleFeedbackTimer) clearTimeout(titleFeedbackTimer);
+  titleFeedbackTimer = setTimeout(() => {
+    chip.hidden = true;
+    chip.textContent = "";
+    delete chip.dataset.kind;
+  }, 1500);
+}
+
+async function syncTitleChrome(active: TabInfo | undefined) {
+  currentTitleState = titleChromeStateFromTab(active);
+  const title = formatTitle(currentTitleState);
+  const label = document.getElementById("title-chrome-label");
+  if (label) label.textContent = title;
+  try {
+    await syncWindowTitle(currentTitleState, {
+      setTitle: (t) => getCurrentWindow().setTitle(t),
+    });
+  } catch {
+    /* non-Tauri / capability missing — contract covers the seam */
+  }
+}
+
+function mountTitleChrome() {
+  const region = document.getElementById("title-chrome");
+  if (!region) return;
+
+  let press: { x: number; y: number; dragging: boolean } | null = null;
+
+  region.addEventListener("dblclick", (ev) => {
+    ev.preventDefault();
+    titleClickSuppressUntil = Date.now() + 400;
+    press = null;
+    void onTitleDoubleClick(titleWindowPort()).catch(() => {
+      /* best-effort outside Tauri */
+    });
+  });
+
+  region.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    press = { x: ev.clientX, y: ev.clientY, dragging: false };
+    try {
+      region.setPointerCapture(ev.pointerId);
+    } catch {
+      /* capture optional */
+    }
+  });
+
+  region.addEventListener("pointermove", (ev) => {
+    if (!press || press.dragging) return;
+    const dx = ev.clientX - press.x;
+    const dy = ev.clientY - press.y;
+    if (Math.hypot(dx, dy) < TITLE_DRAG_THRESHOLD_PX) return;
+    press.dragging = true;
+    void onTitleDragThreshold(titleWindowPort()).catch(() => {
+      /* best-effort outside Tauri */
+    });
+  });
+
+  region.addEventListener("pointerup", () => {
+    if (!press) return;
+    const wasDrag = press.dragging;
+    press = null;
+    if (wasDrag || Date.now() < titleClickSuppressUntil) return;
+    void handleTitleClick(currentTitleState, {
+      writeClipboard: (text) => navigator.clipboard.writeText(text),
+    })
+      .then((result) => {
+        showTitleFeedback(
+          titleChromeFeedback(result),
+          result.ok ? "copied" : "no_path",
+        );
+      })
+      .catch((err) => setStatus(String(err)));
+  });
+
+  region.addEventListener("pointercancel", () => {
+    press = null;
+  });
+}
+
 async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
-  const pathInput = el<HTMLInputElement>("path-input");
   activeId = buffer?.id ?? null;
   renderTabs(tabs);
   await virtualEditor.bind(buffer?.id ?? null, buffer?.revision);
   const active = tabs.find((t) => t.active);
-  // Always sync — untitled must clear so Save cannot reuse another tab's Path.
-  pathInput.value = pathInputValueForActive(active);
+  await syncTitleChrome(active);
+  await refreshStatusMetrics();
 }
 
 function editorSelection():
@@ -741,15 +918,15 @@ async function activateTab(id: string) {
   setStatus(`Switched to ${result.tabs.find((t) => t.active)?.title ?? id}`);
 }
 
-async function gotoLine() {
-  const raw = el<HTMLInputElement>("goto-line").value.trim();
-  const line = Number.parseInt(raw, 10);
-  if (!Number.isFinite(line) || line < 1) {
+async function submitGotoLine() {
+  const raw = el<HTMLInputElement>("goto-line").value;
+  const result = await gotoLinePopup.submit(raw);
+  if (!result.ok) {
     setStatus("Enter a 1-based line number");
     return;
   }
-  await virtualEditor.gotoLine(line);
-  setStatus(`Went to line ${line}`);
+  setStatus(`Went to line ${result.line}`);
+  await refreshStatusMetrics();
 }
 
 async function openPath() {
@@ -1438,49 +1615,101 @@ function openFindChrome(): void {
   findDialog.focusPattern();
 }
 
-function closeFileMenu(): void {
-  const menu = document.getElementById("file-menu");
-  if (menu instanceof HTMLDetailsElement) menu.open = false;
+function closeChromeMenus(): void {
+  for (const id of ["file-menu", "help-menu"] as const) {
+    const menu = document.getElementById(id);
+    if (menu instanceof HTMLDetailsElement) menu.open = false;
+  }
 }
 
-function mountFileMenu(handlers: ShellChromeHandlers): void {
-  const menu = document.getElementById("file-menu");
-  const list = el<HTMLUListElement>("file-menu-list");
-  list.replaceChildren();
-  for (const item of SHELL_FILE_MENU_ITEMS) {
-    const li = document.createElement("li");
-    li.setAttribute("role", "none");
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.setAttribute("role", "menuitem");
-    btn.dataset.shellAction = item.id;
-    const label = document.createElement("span");
-    label.textContent = item.label;
+function appendMenuItem(
+  list: HTMLUListElement,
+  opts: {
+    id: ShellChromeAction;
+    label: string;
+    accelerator?: string;
+    handlers: ShellChromeHandlers;
+  },
+): void {
+  const li = document.createElement("li");
+  li.setAttribute("role", "none");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.setAttribute("role", "menuitem");
+  btn.dataset.shellAction = opts.id;
+  const label = document.createElement("span");
+  label.textContent = opts.label;
+  btn.append(label);
+  if (opts.accelerator) {
     const accel = document.createElement("span");
     accel.className = "accel";
-    accel.textContent = item.accelerator;
-    btn.append(label, accel);
-    btn.addEventListener("click", () => {
-      closeFileMenu();
-      void Promise.resolve(runShellAction(item.id, handlers)).catch((err) =>
-        setStatus(String(err)),
-      );
-    });
-    li.append(btn);
-    list.append(li);
+    accel.textContent = opts.accelerator;
+    btn.append(accel);
   }
+  btn.addEventListener("click", () => {
+    closeChromeMenus();
+    void Promise.resolve(runShellAction(opts.id, opts.handlers)).catch((err) =>
+      setStatus(String(err)),
+    );
+  });
+  li.append(btn);
+  list.append(li);
+}
+
+function mountShellMenus(handlers: ShellChromeHandlers): void {
+  const fileList = el<HTMLUListElement>("file-menu-list");
+  fileList.replaceChildren();
+  for (const item of SHELL_FILE_MENU_ITEMS) {
+    appendMenuItem(fileList, {
+      id: item.id,
+      label: item.label,
+      accelerator: item.accelerator,
+      handlers,
+    });
+  }
+
+  const helpList = el<HTMLUListElement>("help-menu-list");
+  helpList.replaceChildren();
+  for (const item of SHELL_HELP_MENU_ITEMS) {
+    appendMenuItem(helpList, {
+      id: item.id,
+      label: item.label,
+      accelerator: item.accelerator,
+      handlers,
+    });
+  }
+
   // WebView2 keeps <details> open on outside click — dismiss explicitly.
   document.addEventListener(
     "pointerdown",
     (ev) => {
-      if (!(menu instanceof HTMLDetailsElement)) return;
-      if (shouldDismissDetailsMenu(menu, ev.target)) menu.open = false;
+      for (const id of ["file-menu", "help-menu"] as const) {
+        const menu = document.getElementById(id);
+        if (!(menu instanceof HTMLDetailsElement)) continue;
+        if (shouldDismissDetailsMenu(menu, ev.target)) menu.open = false;
+      }
     },
     true,
   );
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape") closeFileMenu();
+    if (ev.key === "Escape") closeChromeMenus();
   });
+}
+
+function openAboutDialog(): void {
+  const info = aboutInfoFromConfig({
+    productName: APP_PRODUCT_NAME,
+    version: APP_VERSION,
+  });
+  el("about-name").textContent = info.name;
+  el("about-version").textContent = `Version ${info.version}`;
+  el("about-blurb").textContent = info.blurb;
+  const dialog = el<HTMLDialogElement>("about-dialog");
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -1495,34 +1724,14 @@ window.addEventListener("DOMContentLoaded", () => {
     save_as: () => saveAsPath(),
     find: () => openFindChrome(),
     demo: () => runVisualDemo().catch((err) => setStatus(String(err))),
+    about: () => openAboutDialog(),
+    // Same three-way ClosePrompter path as the tab × button.
+    close: () => closeActive(),
   };
 
-  mountFileMenu(shellHandlers);
+  mountShellMenus(shellHandlers);
+  mountTitleChrome();
 
-  for (const node of document.querySelectorAll<HTMLElement>(
-    ".toolbar [data-shell-action]",
-  )) {
-    const action = node.dataset.shellAction;
-    if (
-      action !== "new" &&
-      action !== "open" &&
-      action !== "save" &&
-      action !== "save_as" &&
-      action !== "find" &&
-      action !== "demo"
-    ) {
-      continue;
-    }
-    node.addEventListener("click", () => {
-      void Promise.resolve(runShellAction(action, shellHandlers)).catch((err) =>
-        setStatus(String(err)),
-      );
-    });
-  }
-
-  el<HTMLButtonElement>("close-tab").addEventListener("click", () => {
-    void closeActive();
-  });
   virtualEditor = new VirtualEditor(
     el("editor-viewport"),
     el("editor-spacer"),
@@ -1541,26 +1750,71 @@ window.addEventListener("DOMContentLoaded", () => {
         });
         renderTabs(result.tabs);
         activeId = result.buffer.id;
+        await syncTitleChrome(result.tabs.find((t) => t.active));
+        // Metrics refresh after VirtualEditor updates lineCount (see flushEdit);
+        // also refresh here for length/caret when no further selection event fires.
+        void refreshStatusMetrics();
         return { revision: result.buffer.revision };
       },
     },
+    el("line-gutter"),
   );
-  el<HTMLTextAreaElement>("editor").addEventListener("paste", (ev) => {
+  const editorEl = el<HTMLTextAreaElement>("editor");
+  editorEl.addEventListener("paste", (ev) => {
     void onEditorPaste(ev);
   });
-  el<HTMLButtonElement>("goto-line-go").addEventListener("click", () => {
-    void gotoLine();
+  // Caret moves update 行/列/位置 without touching the left status message.
+  for (const evt of ["keyup", "click", "select", "input"] as const) {
+    editorEl.addEventListener(evt, () => {
+      void refreshStatusMetrics();
+    });
+  }
+  document.addEventListener("selectionchange", () => {
+    if (document.activeElement === editorEl) {
+      void refreshStatusMetrics();
+    }
   });
+  const gotoSurface: GotoLinePopupSurface = {
+    present() {
+      el<HTMLElement>("goto-line-popup").hidden = false;
+      el<HTMLInputElement>("goto-line").value = "";
+    },
+    dismiss() {
+      el<HTMLElement>("goto-line-popup").hidden = true;
+    },
+    focusInput() {
+      const input = el<HTMLInputElement>("goto-line");
+      input.focus();
+      input.select();
+    },
+  };
+  gotoLinePopup = new GotoLinePopup(
+    {
+      async gotoLine(line) {
+        await virtualEditor.gotoLine(line);
+        await refreshStatusMetrics();
+      },
+    },
+    gotoSurface,
+  );
   el<HTMLInputElement>("goto-line").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
-      void gotoLine();
+      void submitGotoLine();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      gotoLinePopup.closePopup();
     }
   });
   window.addEventListener("keydown", (ev) => {
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "g") {
       ev.preventDefault();
-      el<HTMLInputElement>("goto-line").focus();
+      gotoLinePopup.openPopup();
+      return;
+    }
+    if (ev.key === "Escape" && gotoLinePopup.isOpen()) {
+      ev.preventDefault();
+      gotoLinePopup.closePopup();
       return;
     }
     const shellAction = resolveShellShortcut(ev);
