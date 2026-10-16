@@ -135,7 +135,17 @@ impl IntentBridge {
         cmd.args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            // Do not inherit a console handle: on Windows that surfaces as an
+            // empty cmd/Windows Terminal window next to the GUI app.
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // node.exe / npx.cmd are console-subsystem; GUI parents must set this
+            // or Windows allocates a visible console for the IPC child.
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         // Help Node treat shipped JS as ESM via nova-dist/package.json.
         if let Some(dist_root) = host
             .parent()
