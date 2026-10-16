@@ -554,6 +554,19 @@ pub fn preview_run(bridge: &SharedBridge, params: Value) -> Result<Value, String
     call_params(bridge, "preview_run", params)
 }
 
+/// WUF-109 — silently snapshot dirty Buffers on window quit (no prompt storm).
+pub fn recovery_persist_quit(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "recovery_persist_quit")
+}
+
+pub fn recovery_restore_launch(bridge: &SharedBridge) -> Result<Value, String> {
+    call_empty(bridge, "recovery_restore_launch")
+}
+
+pub fn recovery_drop(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    call_params(bridge, "recovery_drop", json!({ "id": id }))
+}
+
 fn call_empty(bridge: &SharedBridge, method: &str) -> Result<Value, String> {
     let mut guard = bridge
         .lock()

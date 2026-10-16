@@ -4,10 +4,10 @@ use intent_bridge::{
     accept, activate_tab, apply_draft, buffer_len, buffer_line_count, buffer_rev, confirm_close,
     create_buffer, delete_action, edit_active, evoke, find, get_buffer, get_draft, get_shell_state,
     get_suggestions_enabled, line_window, list_actions, list_tabs, open_path, preview_intent,
-    preview_replace, preview_run, reject_preview, rename_action, replace_accept, request_close,
-    resolve_explanation_anchor, save_active, save_active_as, save_from_regex_draft,
-    select_suggestion, set_cloud_enabled, set_suggestions_enabled, slice, suggestions_for_paste,
-    undo, IntentBridge, SharedBridge,
+    preview_replace, preview_run, recovery_drop, recovery_persist_quit, recovery_restore_launch,
+    reject_preview, rename_action, replace_accept, request_close, resolve_explanation_anchor,
+    save_active, save_active_as, save_from_regex_draft, select_suggestion, set_cloud_enabled,
+    set_suggestions_enabled, slice, suggestions_for_paste, undo, IntentBridge, SharedBridge,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -314,6 +314,28 @@ fn preview_run_cmd(
     preview_run(&bridge, params)
 }
 
+#[tauri::command]
+fn recovery_persist_quit_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+) -> Result<Value, String> {
+    recovery_persist_quit(&bridge)
+}
+
+#[tauri::command]
+fn recovery_restore_launch_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+) -> Result<Value, String> {
+    recovery_restore_launch(&bridge)
+}
+
+#[tauri::command]
+fn recovery_drop_cmd(
+    bridge: tauri::State<'_, SharedBridge>,
+    id: String,
+) -> Result<Value, String> {
+    recovery_drop(&bridge, id)
+}
+
 fn focus_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -339,6 +361,7 @@ fn evoke_from_hotkey(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let resource_dir = app.path().resource_dir().ok();
             let bridge = IntentBridge::spawn(resource_dir).map_err(|e| {
@@ -415,7 +438,10 @@ pub fn run() {
             list_actions_cmd,
             rename_action_cmd,
             delete_action_cmd,
-            preview_run_cmd
+            preview_run_cmd,
+            recovery_persist_quit_cmd,
+            recovery_restore_launch_cmd,
+            recovery_drop_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

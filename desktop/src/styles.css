@@ -17,8 +17,79 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto auto auto;
+  grid-template-rows: auto auto auto auto 1fr auto auto auto;
   min-height: 100vh;
+  position: relative;
+}
+
+.menubar {
+  display: flex;
+  align-items: stretch;
+  gap: 0.15rem;
+  padding: 0.15rem 0.35rem;
+  background: #e8e4dc;
+  border-bottom: 1px solid #bdb7aa;
+}
+
+.menu {
+  position: relative;
+}
+
+.menu > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.25rem 0.55rem;
+  border-radius: 2px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu > summary:hover,
+.menu[open] > summary {
+  background: #d2cdc3;
+}
+
+.menu > ul {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  min-width: 12rem;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: #f7f5f0;
+  border: 1px solid #a9a296;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.menu > ul button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.35rem 0.75rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #1c1c1c;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu > ul button:hover {
+  background: #2f2f2f;
+  color: #fff;
+}
+
+.menu > ul button .accel {
+  opacity: 0.65;
+  font-size: 0.85em;
 }
 
 .toolbar {
@@ -46,8 +117,14 @@ body {
   padding: 0.35rem 0.5rem;
   border: 1px solid #a9a296;
   border-radius: 3px;
-  background: #fff;
+  background: #f3f1ec;
+  color: #3a3a3a;
   font: inherit;
+  cursor: default;
+}
+
+.path-field input[readonly] {
+  user-select: text;
 }
 
 button {
@@ -69,16 +146,52 @@ button:disabled {
   cursor: not-allowed;
 }
 
-button.tab {
+.tab-item {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #bdb7aa;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
   background: #f7f5f0;
+  overflow: hidden;
+}
+
+.tab-item.active {
+  background: #fff;
+  border-bottom-color: #fff;
+}
+
+button.tab {
+  background: transparent;
   color: #1c1c1c;
-  border-color: #bdb7aa;
+  border: none;
+  border-radius: 0;
+  padding: 0.35rem 0.55rem;
 }
 
 button.tab.active {
-  background: #fff;
-  border-bottom-color: #fff;
   font-weight: 650;
+}
+
+button.tab[data-dirty="true"] {
+  font-style: italic;
+}
+
+button.tab-close {
+  background: transparent;
+  color: #4a4a4a;
+  border: none;
+  border-left: 1px solid #d5cfc3;
+  border-radius: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: 1rem;
+  line-height: 1;
+  min-width: 1.6rem;
+}
+
+button.tab-close:hover {
+  background: #e8e0d4;
+  color: #1c1c1c;
 }
 
 .tab-bar {
@@ -89,6 +202,49 @@ button.tab.active {
   background: #dcd7cd;
   border-bottom: 1px solid #bdb7aa;
   min-height: 2.2rem;
+}
+
+.close-prompt-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(40, 36, 30, 0.35);
+}
+
+.close-prompt-panel {
+  min-width: min(22rem, 92vw);
+  max-width: 28rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #8a7f6a;
+  border-radius: 4px;
+  background: #f7f5f0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.close-prompt-panel h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+
+.close-prompt-panel p {
+  margin: 0 0 0.9rem;
+  color: #3d3d3d;
+}
+
+.close-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+button.close-prompt-secondary {
+  background: #f7f5f0;
+  color: #1c1c1c;
+  border-color: #8a7f6a;
 }
 
 .editor-chrome {
@@ -177,13 +333,60 @@ button.tab.active {
   background: #fff;
 }
 
+/* Modeless Find window — floats over chrome; does not block the editor. */
+.find-dialog {
+  position: absolute;
+  z-index: 20;
+  right: 0.75rem;
+  bottom: 8.5rem;
+  width: min(36rem, calc(100% - 1.5rem));
+  border: 1px solid #8a8478;
+  border-radius: 4px;
+  background: #e2e6e0;
+  box-shadow: 0 4px 18px rgba(28, 28, 28, 0.18);
+}
+
+.find-dialog[hidden] {
+  display: none !important;
+}
+
+.find-dialog-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  background: #cfd4ce;
+  border-bottom: 1px solid #bdb7aa;
+  border-radius: 4px 4px 0 0;
+  cursor: default;
+  user-select: none;
+}
+
+.find-dialog-title {
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+
+.find-dialog-chrome #find-close {
+  padding: 0.1rem 0.45rem;
+  line-height: 1.2;
+  background: transparent;
+  color: #1c1c1c;
+  border-color: transparent;
+}
+
+.find-dialog-chrome #find-close:hover {
+  background: #b8beb7;
+}
+
 .find-panel {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.55rem 0.75rem;
-  background: #e2e6e0;
-  border-top: 1px solid #bdb7aa;
+  background: transparent;
+  border-top: none;
 }
 
 .find-bar {

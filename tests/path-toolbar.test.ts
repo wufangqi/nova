@@ -1,6 +1,6 @@
 /**
- * WUF-82 regression: Path toolbar must track the active Buffer.
- * Untitled tabs clear #path-input so Save cannot reuse another tab's Path.
+ * WUF-82 / WUF-104: Path chrome tracks the active Buffer (display-only).
+ * Untitled clears the display; Save routing no longer uses typed Path.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -27,31 +27,20 @@ describe("Path toolbar sync with active Buffer", () => {
   });
 });
 
-describe("Save must not reuse previous tab Path on untitled", () => {
-  it("after switch to untitled, synced Path forces need_path (not stale save-as)", () => {
+describe("Save routing without typed Path", () => {
+  it("untitled needs Save As (PathPicker), never reuses a previous Path", () => {
     const previousPath = "C:\\notes\\bound.txt";
     const untitled = { path: null, untitled: true };
 
-    // Toolbar must not keep the previous tab's Path after activate.
     const synced = pathInputValueForActive(untitled);
     assert.equal(synced, "");
     assert.notEqual(synced, previousPath);
 
-    assert.equal(chooseSaveAction(untitled, synced), "need_path");
+    assert.equal(chooseSaveAction(untitled), "need_save_as");
   });
 
-  it("save-as only when the user entered an explicit Path on untitled", () => {
-    const untitled = { path: null, untitled: true };
-    assert.deepEqual(chooseSaveAction(untitled, "C:\\notes\\new.txt"), {
-      saveAs: "C:\\notes\\new.txt",
-    });
-  });
-
-  it("plain save when path-bound and input matches binding", () => {
+  it("plain save when path-bound", () => {
     const bound = { path: "C:\\notes\\bound.txt", untitled: false };
-    assert.equal(
-      chooseSaveAction(bound, pathInputValueForActive(bound)),
-      "save",
-    );
+    assert.equal(chooseSaveAction(bound), "save");
   });
 });

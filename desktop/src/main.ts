@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ActionPanel,
   type ActionPanelPort,
@@ -9,12 +10,106 @@ import {
   canOfferSaveAsAction,
   type PreviewKindForSave,
 } from "./action-ui.ts";
+import { createDomClosePrompter } from "./dom-close-prompter.ts";
 import {
-  chooseSaveAction,
-  pathInputValueForActive,
-} from "./path-toolbar.ts";
+  openWithPicker,
+  saveAsWithPicker,
+  saveWithPicker,
+  type FileOpsPort,
+} from "./file-ops.ts";
+import {
+  FindDialog,
+  type FindDialogFields,
+  type FindDialogPort,
+  type FindDialogSurface,
+} from "./find-dialog.ts";
+import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
+import { closeTabWithPrompter, type TabClosePort } from "./tab-close.ts";
+import {
+  SHELL_FILE_MENU_ITEMS,
+  resolveShellShortcut,
+  runShellAction,
+  type ShellChromeHandlers,
+} from "./shell-chrome.ts";
+import { createTauriPathPicker } from "./tauri-path-picker.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
+import { runWindowQuitRecovery } from "./window-quit.ts";
+
+const pathPicker = createTauriPathPicker();
+let closePrompter = createDomClosePrompter(document.body);
+
+const fileOpsPort: FileOpsPort = {
+  async getActiveTab() {
+    const tabs = await invoke<ShellTabsResult>("list_tabs_cmd");
+    const active = tabs.tabs.find((t) => t.active);
+    if (!active) return undefined;
+    return { path: active.path, untitled: active.untitled };
+  },
+  async openPath(path) {
+    const result = await invoke<ShellBufferResult>("open_path_cmd", { path });
+    await applyState(result.buffer, result.tabs);
+    clearPreviewPanel();
+    clearSuggestionsBar();
+    clearFindHits();
+  },
+  async saveActive() {
+    const result = await invoke<ShellTabsResult>("save_active_cmd");
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, result.tabs);
+  },
+  async saveActiveAs(path) {
+    const result = await invoke<ShellTabsResult>("save_active_as_cmd", { path });
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, result.tabs);
+  },
+};
+
+const tabClosePort: TabClosePort = {
+  async getTab(bufferId) {
+    const tabs = await invoke<ShellTabsResult>("list_tabs_cmd");
+    const tab = tabs.tabs.find((t) => t.bufferId === bufferId);
+    if (!tab) return undefined;
+    return {
+      title: tab.title.replace(/\*$/, ""),
+      hasPath: tab.path != null,
+      dirty: tab.dirty,
+    };
+  },
+  async closeClean(bufferId) {
+    const result = await invoke<ShellCloseResult>("request_close_cmd", {
+      id: bufferId,
+    });
+    if (!result.close.ok) {
+      throw new Error("expected clean close without confirm");
+    }
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, result.tabs);
+    clearPreviewPanel();
+    clearSuggestionsBar();
+    clearFindHits();
+  },
+  async discard(bufferId) {
+    const confirmed = await invoke<ShellCloseResult>("confirm_close_cmd", {
+      id: bufferId,
+    });
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, confirmed.tabs);
+    clearPreviewPanel();
+    clearSuggestionsBar();
+    clearFindHits();
+  },
+  async save(bufferId) {
+    if (bufferId !== activeId) {
+      await activateTab(bufferId);
+    }
+    const outcome = await saveWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled" || outcome.kind === "no_active") {
+      return "cancelled";
+    }
+    return "saved";
+  },
+};
 
 /** Mirrors nova `GLOBAL_HOTKEY_ACCELERATOR` / Tauri registration. */
 const GLOBAL_HOTKEY_ACCELERATOR = "Ctrl+Alt+N";
@@ -289,12 +384,71 @@ const actionPort: ActionPanelPort = {
 
 const actionPanel = new ActionPanel(actionPort);
 
+/** Tauri invoke port for Find — same IPC methods as the contract tests inject. */
+const findPort: FindDialogPort = {
+  async find(params) {
+    const result = await invoke<FindIpcResult>("find_cmd", { params });
+    return { hits: result.hits, count: result.count };
+  },
+  async previewReplace(params) {
+    const result = await invoke<PreviewReplaceIpcResult>("preview_replace_cmd", {
+      params,
+    });
+    return { preview: result.preview };
+  },
+  async replaceAccept(params) {
+    const result = await invoke<ReplaceAcceptIpcResult>("replace_accept_cmd", {
+      params,
+    });
+    return { accept: result.accept };
+  },
+  async applyDraft(draft) {
+    await invoke<ApplyDraftIpcResult>("apply_draft_cmd", { draft });
+  },
+};
+
+function writeFindFieldsToDom(fields: FindDialogFields) {
+  el<HTMLInputElement>("find-pattern").value = fields.pattern;
+  el<HTMLInputElement>("find-replacement").value = fields.replacement;
+  el<HTMLInputElement>("find-flag-i").checked = !!fields.flags.i;
+  el<HTMLInputElement>("find-flag-m").checked = !!fields.flags.m;
+  el<HTMLInputElement>("find-flag-s").checked = !!fields.flags.s;
+}
+
+function readFindFieldsFromDom(): FindDialogFields {
+  return {
+    pattern: el<HTMLInputElement>("find-pattern").value,
+    replacement: el<HTMLInputElement>("find-replacement").value,
+    flags: {
+      i: el<HTMLInputElement>("find-flag-i").checked || undefined,
+      m: el<HTMLInputElement>("find-flag-m").checked || undefined,
+      s: el<HTMLInputElement>("find-flag-s").checked || undefined,
+    },
+  };
+}
+
+const findSurface: FindDialogSurface = {
+  present(fields) {
+    writeFindFieldsToDom(fields);
+    el<HTMLElement>("find-dialog").hidden = false;
+  },
+  dismiss() {
+    el<HTMLElement>("find-dialog").hidden = true;
+  },
+  focusPattern() {
+    const input = el<HTMLInputElement>("find-pattern");
+    input.focus();
+    input.select();
+  },
+};
+
+const findDialog = new FindDialog(findPort, findSurface);
+
 let activeId: string | null = null;
 let pendingPreviewId: string | null = null;
 let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
-let lastFindHits: FindHit[] = [];
 let virtualEditor: VirtualEditor;
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -365,15 +519,36 @@ function renderTabs(tabs: TabInfo[]) {
   const bar = el<HTMLElement>("tab-bar");
   bar.replaceChildren();
   for (const tab of tabs) {
+    const wrap = document.createElement("div");
+    wrap.className = tab.active ? "tab-item active" : "tab-item";
+    wrap.dataset.bufferId = tab.bufferId;
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = tab.active ? "tab active" : "tab";
     btn.textContent = tab.title;
+    btn.title = tab.dirty ? `${tab.title} (unsaved)` : tab.title;
     btn.dataset.bufferId = tab.bufferId;
+    if (tab.dirty) {
+      btn.dataset.dirty = "true";
+    }
     btn.addEventListener("click", () => {
       void activateTab(tab.bufferId);
     });
-    bar.appendChild(btn);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "tab-close";
+    closeBtn.textContent = "×";
+    closeBtn.title = "Close";
+    closeBtn.setAttribute("aria-label", `Close ${tab.title}`);
+    closeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void closeBuffer(tab.bufferId);
+    });
+
+    wrap.append(btn, closeBtn);
+    bar.appendChild(wrap);
   }
 }
 
@@ -431,27 +606,21 @@ function setFindReplaceAccept(enabled: boolean) {
 
 function clearFindHits() {
   setFindReplaceAccept(false);
-  lastFindHits = [];
   const hitsEl = el<HTMLElement>("find-hits");
   hitsEl.hidden = true;
   hitsEl.replaceChildren();
 }
 
-function fillFindBarFromDraft(draft: {
+async function fillFindBarFromDraft(draft: {
   pattern: string;
   replacement?: string;
   flags?: string;
 }) {
-  el<HTMLInputElement>("find-pattern").value = draft.pattern;
-  el<HTMLInputElement>("find-replacement").value = draft.replacement ?? "";
-  const flags = draft.flags ?? "";
-  el<HTMLInputElement>("find-flag-i").checked = flags.includes("i");
-  el<HTMLInputElement>("find-flag-m").checked = flags.includes("m");
-  el<HTMLInputElement>("find-flag-s").checked = flags.includes("s");
+  // Opens/focuses the modeless Find dialog; apply_draft stays on the IPC seam.
+  await findDialog.applyRegexDraft(draft);
 }
 
 function renderFindHits(hits: FindHit[], count: number) {
-  lastFindHits = hits;
   const hitsEl = el<HTMLElement>("find-hits");
   hitsEl.hidden = false;
   hitsEl.replaceChildren();
@@ -583,48 +752,124 @@ async function gotoLine() {
 }
 
 async function openPath() {
-  const path = el<HTMLInputElement>("path-input").value.trim();
-  if (!path) {
-    setStatus("Enter a Path to open");
-    return;
-  }
   try {
-    const result = await invoke<ShellBufferResult>("open_path_cmd", { path });
-    await applyState(result.buffer, result.tabs);
-    clearPreviewPanel();
-    clearSuggestionsBar();
-    clearFindHits();
-    setStatus(`Opened ${path}`);
+    const outcome = await openWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled") {
+      setStatus("Open cancelled");
+      return;
+    }
+    if (outcome.kind === "opened") {
+      setStatus(`Opened ${outcome.path}`);
+    }
   } catch (err) {
     setStatus(String(err));
   }
 }
 
-async function save() {
-  const pathInput = el<HTMLInputElement>("path-input");
-  const tabs = await invoke<ShellTabsResult>("list_tabs_cmd");
-  const active = tabs.tabs.find((t) => t.active);
-  const action = chooseSaveAction(active, pathInput.value);
+async function noteRecoveryDrop(bufferId: string | null | undefined) {
+  if (!bufferId) return;
   try {
-    let result: ShellTabsResult;
-    if (action === "need_path") {
-      setStatus("Enter a Path to save (untitled Buffer needs save-as)");
+    await invoke("recovery_drop_cmd", { id: bufferId });
+  } catch {
+    /* recovery drop is best-effort */
+  }
+}
+
+async function save() {
+  try {
+    const savedId = activeId;
+    const outcome = await saveWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled") {
+      setStatus("Save As cancelled");
       return;
     }
-    if (action === "save") {
-      result = await invoke<ShellTabsResult>("save_active_cmd");
-      setStatus(`Saved ${active!.path}`);
-    } else {
-      result = await invoke<ShellTabsResult>("save_active_as_cmd", {
-        path: action.saveAs,
-      });
-      setStatus(`Saved as ${action.saveAs}`);
+    if (outcome.kind === "no_active") {
+      setStatus("No Buffer to save");
+      return;
     }
-    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    await applyState(state.buffer, result.tabs);
+    if (outcome.kind === "saved") {
+      await noteRecoveryDrop(savedId);
+      setStatus(`Saved ${outcome.path}`);
+      return;
+    }
+    if (outcome.kind === "saved_as") {
+      await noteRecoveryDrop(savedId);
+      setStatus(`Saved as ${outcome.path}`);
+    }
   } catch (err) {
     setStatus(String(err));
   }
+}
+
+async function saveAsPath() {
+  try {
+    const savedId = activeId;
+    const outcome = await saveAsWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled") {
+      setStatus("Save As cancelled");
+      return;
+    }
+    if (outcome.kind === "no_active") {
+      setStatus("No Buffer to save");
+      return;
+    }
+    if (outcome.kind === "saved_as") {
+      await noteRecoveryDrop(savedId);
+      setStatus(`Saved as ${outcome.path}`);
+    }
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function closeBuffer(bufferId: string) {
+  try {
+    const outcome = await closeTabWithPrompter(
+      closePrompter,
+      tabClosePort,
+      bufferId,
+    );
+    if (outcome.kind === "missing") {
+      setStatus("No Buffer to close");
+      return;
+    }
+    if (outcome.kind === "cancelled") {
+      setStatus("Close cancelled");
+      return;
+    }
+    if (
+      outcome.kind === "closed" &&
+      (outcome.via === "discard" || outcome.via === "save")
+    ) {
+      await noteRecoveryDrop(bufferId);
+    }
+    if (outcome.via === "clean") {
+      setStatus("Closed (clean, no prompt)");
+      return;
+    }
+    if (outcome.via === "save") {
+      setStatus("Saved and closed");
+      return;
+    }
+    setStatus("Closed without saving");
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function persistRecoveryOnWindowQuit(): Promise<number> {
+  const result = await invoke<{ preservedCount: number }>(
+    "recovery_persist_quit_cmd",
+  );
+  return result.preservedCount;
+}
+
+async function restoreRecoveryOnLaunch(): Promise<{
+  restoredCount: number;
+  buffer: BufferSnapshot | null;
+  tabs: TabInfo[];
+}> {
+  return invoke("recovery_restore_launch_cmd");
 }
 
 async function closeActive() {
@@ -632,42 +877,7 @@ async function closeActive() {
     setStatus("No Buffer to close");
     return;
   }
-  const id = activeId;
-  try {
-    const result = await invoke<ShellCloseResult>("request_close_cmd", { id });
-    if (!result.close.ok) {
-      const message =
-        result.close.reason === "confirm_discard_untitled"
-          ? "Discard unsaved untitled Buffer?"
-          : "Discard unsaved changes?";
-      if (!window.confirm(message)) {
-        await applyState(
-          (await invoke<ShellStateResult>("get_shell_state_cmd")).buffer,
-          result.tabs,
-        );
-        setStatus("Close cancelled");
-        return;
-      }
-      const confirmed = await invoke<ShellCloseResult>("confirm_close_cmd", {
-        id,
-      });
-      const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-      await applyState(state.buffer, confirmed.tabs);
-      clearPreviewPanel();
-      clearSuggestionsBar();
-      clearFindHits();
-      setStatus("Closed after confirm");
-      return;
-    }
-    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    await applyState(state.buffer, result.tabs);
-    clearPreviewPanel();
-    clearSuggestionsBar();
-    clearFindHits();
-    setStatus(result.close.asked ? "Closed" : "Closed (clean, no prompt)");
-  } catch (err) {
-    setStatus(String(err));
-  }
+  await closeBuffer(activeId);
 }
 
 async function onHotkeyEvoke(payload: ShellBufferResult) {
@@ -793,19 +1003,18 @@ async function applyPreviewResult(
     return;
   }
 
-  // RegexDraft fills FindBar only — never Accepts into Buffer.
+  // RegexDraft fills Find dialog only — never Accepts into Buffer.
   const draft = preview.draft;
-  await invoke<ApplyDraftIpcResult>("apply_draft_cmd", { draft });
-  fillFindBarFromDraft(draft);
+  await fillFindBarFromDraft(draft);
   clearFindHits();
   diffEl.hidden = false;
-  diffEl.textContent = `RegexDraft filled FindBar: /${draft.pattern}/${draft.flags ?? ""}${
+  diffEl.textContent = `RegexDraft filled Find dialog: /${draft.pattern}/${draft.flags ?? ""}${
     draft.replacement !== undefined ? ` → ${JSON.stringify(draft.replacement)}` : ""
   }\nBuffer unchanged — use Find / Preview replace / Replace Accept, or Save as Action.`;
   setIntentActions({ accept: false, reject: true });
   setSaveAsActionEnabled(canOfferSaveAsAction("regex_draft"));
   setStatus(
-    "RegexDraft → FindBar (no Buffer write) — Save as Action to pin for reuse",
+    "RegexDraft → Find dialog (no Buffer write) — Save as Action to pin for reuse",
   );
 }
 
@@ -1223,19 +1432,80 @@ async function selectSuggestion(suggestion: Suggestion) {
   }
 }
 
+function openFindChrome(): void {
+  findDialog.setFields(readFindFieldsFromDom());
+  findDialog.focusPattern();
+}
+
+function closeFileMenu(): void {
+  const menu = document.getElementById("file-menu");
+  if (menu instanceof HTMLDetailsElement) menu.open = false;
+}
+
+function mountFileMenu(handlers: ShellChromeHandlers): void {
+  const list = el<HTMLUListElement>("file-menu-list");
+  list.replaceChildren();
+  for (const item of SHELL_FILE_MENU_ITEMS) {
+    const li = document.createElement("li");
+    li.setAttribute("role", "none");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("role", "menuitem");
+    btn.dataset.shellAction = item.id;
+    const label = document.createElement("span");
+    label.textContent = item.label;
+    const accel = document.createElement("span");
+    accel.className = "accel";
+    accel.textContent = item.accelerator;
+    btn.append(label, accel);
+    btn.addEventListener("click", () => {
+      closeFileMenu();
+      void Promise.resolve(runShellAction(item.id, handlers)).catch((err) =>
+        setStatus(String(err)),
+      );
+    });
+    li.append(btn);
+    list.append(li);
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
-  el<HTMLButtonElement>("new-tab").addEventListener("click", () => {
-    void evoke().catch((err) => setStatus(String(err)));
-  });
-  el<HTMLButtonElement>("run-demo").addEventListener("click", () => {
-    void runVisualDemo().catch((err) => setStatus(String(err)));
-  });
-  el<HTMLButtonElement>("open-path").addEventListener("click", () => {
-    void openPath();
-  });
-  el<HTMLButtonElement>("save").addEventListener("click", () => {
-    void save();
-  });
+  // Re-bind after body exists so the overlay mounts under .app when preferred.
+  closePrompter = createDomClosePrompter(
+    document.querySelector(".app") ?? document.body,
+  );
+  const shellHandlers: ShellChromeHandlers = {
+    new: () => evoke().catch((err) => setStatus(String(err))),
+    open: () => openPath(),
+    save: () => save(),
+    save_as: () => saveAsPath(),
+    find: () => openFindChrome(),
+    demo: () => runVisualDemo().catch((err) => setStatus(String(err))),
+  };
+
+  mountFileMenu(shellHandlers);
+
+  for (const node of document.querySelectorAll<HTMLElement>(
+    ".toolbar [data-shell-action]",
+  )) {
+    const action = node.dataset.shellAction;
+    if (
+      action !== "new" &&
+      action !== "open" &&
+      action !== "save" &&
+      action !== "save_as" &&
+      action !== "find" &&
+      action !== "demo"
+    ) {
+      continue;
+    }
+    node.addEventListener("click", () => {
+      void Promise.resolve(runShellAction(action, shellHandlers)).catch((err) =>
+        setStatus(String(err)),
+      );
+    });
+  }
+
   el<HTMLButtonElement>("close-tab").addEventListener("click", () => {
     void closeActive();
   });
@@ -1277,6 +1547,14 @@ window.addEventListener("DOMContentLoaded", () => {
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "g") {
       ev.preventDefault();
       el<HTMLInputElement>("goto-line").focus();
+      return;
+    }
+    const shellAction = resolveShellShortcut(ev);
+    if (shellAction) {
+      ev.preventDefault();
+      void Promise.resolve(runShellAction(shellAction, shellHandlers)).catch(
+        (err) => setStatus(String(err)),
+      );
     }
   });
 
@@ -1311,18 +1589,25 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  el<HTMLButtonElement>("find-close").addEventListener("click", () => {
+    findDialog.closeDialog();
+  });
   el<HTMLButtonElement>("find-go").addEventListener("click", () => {
+    findDialog.setFields(readFindFieldsFromDom());
     void runFind();
   });
   el<HTMLButtonElement>("find-preview-replace").addEventListener("click", () => {
+    findDialog.setFields(readFindFieldsFromDom());
     void previewFindReplace();
   });
   el<HTMLButtonElement>("find-replace-accept").addEventListener("click", () => {
+    findDialog.setFields(readFindFieldsFromDom());
     void acceptFindReplace();
   });
   el<HTMLInputElement>("find-pattern").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
+      findDialog.setFields(readFindFieldsFromDom());
       void runFind();
     }
   });
@@ -1337,6 +1622,28 @@ window.addEventListener("DOMContentLoaded", () => {
     /* optional channel */
   });
 
+  // Window close: RecoveryBuffer persist only — never per-tab three-button storm.
+  void getCurrentWindow()
+    .onCloseRequested(async (event) => {
+      event.preventDefault();
+      try {
+        const outcome = await runWindowQuitRecovery({
+          persistDirty: persistRecoveryOnWindowQuit,
+        });
+        if (outcome.statusMessage) {
+          setStatus(outcome.statusMessage);
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      } catch (err) {
+        setStatus(String(err));
+        await new Promise((r) => setTimeout(r, 350));
+      }
+      await getCurrentWindow().destroy();
+    })
+    .catch(() => {
+      /* non-Tauri / capability missing — contracts cover the seam */
+    });
+
   void (async () => {
     try {
       const state = await invoke<{ enabled: boolean }>(
@@ -1346,13 +1653,39 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch {
       el<HTMLInputElement>("suggestions-enabled").checked = false;
     }
-    await evoke();
+
+    let restoredCount = 0;
+    try {
+      const restored = await restoreRecoveryOnLaunch();
+      restoredCount = restored.restoredCount;
+      if (restoredCount > 0) {
+        await applyState(restored.buffer, restored.tabs);
+        clearPreviewPanel();
+        clearSuggestionsBar();
+        clearFindHits();
+      } else {
+        await evoke();
+      }
+    } catch {
+      await evoke();
+    }
+
     await refreshActionList();
     try {
       const accel = await invoke<string>("get_global_hotkey_cmd");
-      setStatus(`Ready — global hotkey ${accel}`);
+      if (restoredCount > 0) {
+        setStatus(`已恢复未保存标签 — global hotkey ${accel}`);
+      } else {
+        setStatus(`Ready — global hotkey ${accel}`);
+      }
     } catch {
-      setStatus(`Ready — global hotkey ${GLOBAL_HOTKEY_ACCELERATOR}`);
+      if (restoredCount > 0) {
+        setStatus(
+          `已恢复未保存标签 — global hotkey ${GLOBAL_HOTKEY_ACCELERATOR}`,
+        );
+      } else {
+        setStatus(`Ready — global hotkey ${GLOBAL_HOTKEY_ACCELERATOR}`);
+      }
     }
   })().catch((err) => setStatus(String(err)));
 });

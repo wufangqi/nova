@@ -1,12 +1,12 @@
-/** Active tab fields the Path toolbar cares about. */
+/** Active tab fields the Path chrome cares about. */
 export type PathToolbarTab = {
   path: string | null;
   untitled: boolean;
 };
 
 /**
- * Value for `#path-input` given the active tab.
- * Untitled / missing active → empty so Save cannot reuse another tab's Path.
+ * Value for the read-only Path display given the active tab.
+ * Untitled / missing active → empty.
  */
 export function pathInputValueForActive(
   active: PathToolbarTab | null | undefined,
@@ -14,24 +14,15 @@ export function pathInputValueForActive(
   return active?.path ?? "";
 }
 
-export type SaveAction =
-  | "save"
-  | "need_path"
-  | { saveAs: string };
+export type SaveAction = "save" | "need_save_as";
 
 /**
- * Decide Save from active tab + current path-input (already synced).
- * Callers must pass `pathInputValueForActive(active)` (or user-edited input)
- * — never a Path left over from a previous tab without sync.
+ * Decide Save from the active tab alone (Path is display-only; no hand-typed Path).
+ * Untitled / unbound → Save As via PathPicker; Path-bound → write back.
  */
 export function chooseSaveAction(
   active: PathToolbarTab | undefined,
-  pathInputRaw: string,
 ): SaveAction {
-  const path = pathInputRaw.trim();
-  if (!active || active.untitled || (path && path !== active.path)) {
-    if (!path) return "need_path";
-    return { saveAs: path };
-  }
+  if (!active || active.untitled || !active.path) return "need_save_as";
   return "save";
 }

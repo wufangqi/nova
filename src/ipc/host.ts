@@ -17,6 +17,15 @@ import {
 import { EditorShell } from "../editor-shell.js";
 import { FindBar } from "../find-bar.js";
 import { IntentService } from "../intent-service.js";
+import {
+  noteBufferSaved,
+  persistDirtyOnQuit,
+  restoreOnLaunch,
+} from "../recovery.js";
+import {
+  createMemoryRecoveryStore,
+  type RecoveryStore,
+} from "../recovery-store.js";
 import { ClipboardSuggestions } from "../suggestions.js";
 import type { IntentServiceOptions } from "../types.js";
 import type {
@@ -61,6 +70,12 @@ import type {
   PreviewReplaceRequest,
   PreviewRunIpcResult,
   PreviewRunRequest,
+  RecoveryDropRequest,
+  RecoveryDropResult,
+  RecoveryPersistQuitRequest,
+  RecoveryPersistQuitResult,
+  RecoveryRestoreLaunchRequest,
+  RecoveryRestoreLaunchResult,
   RejectPreviewRequest,
   RejectPreviewResult,
   RenameActionIpcResult,
@@ -112,6 +127,8 @@ export interface IntentIpcHostOptions extends IntentServiceOptions {
   actionStore?: ActionStore;
   /** Override Action soft cap (tests). */
   actionSoftCap?: number;
+  /** Injectable RecoveryBuffer store (tests: memory / temp dir; host: profile dir). */
+  recoveryStore?: RecoveryStore;
 }
 
 export class IntentIpcHost {
@@ -120,6 +137,7 @@ export class IntentIpcHost {
   readonly findBar: FindBar;
   readonly suggestions: ClipboardSuggestions;
   readonly actions: ActionService;
+  readonly recoveryStore: RecoveryStore;
 
   constructor(options: IntentIpcHostOptions = {}) {
     this.service = new IntentService(options);
@@ -131,6 +149,8 @@ export class IntentIpcHost {
       options.actionStore ?? new MemoryActionStore(),
       { softCap: options.actionSoftCap },
     );
+    this.recoveryStore =
+      options.recoveryStore ?? createMemoryRecoveryStore();
   }
 
   handle(request: CreateBufferRequest): Promise<IpcResponse<CreateBufferResult>>;
@@ -188,6 +208,13 @@ export class IntentIpcHost {
     request: DeleteActionRequest,
   ): Promise<IpcResponse<DeleteActionIpcResult>>;
   handle(request: PreviewRunRequest): Promise<IpcResponse<PreviewRunIpcResult>>;
+  handle(
+    request: RecoveryPersistQuitRequest,
+  ): Promise<IpcResponse<RecoveryPersistQuitResult>>;
+  handle(
+    request: RecoveryRestoreLaunchRequest,
+  ): Promise<IpcResponse<RecoveryRestoreLaunchResult>>;
+  handle(request: RecoveryDropRequest): Promise<IpcResponse<RecoveryDropResult>>;
   handle(request: IpcRequest): Promise<IpcResponse<unknown>>;
   async handle(request: IpcRequest): Promise<IpcResponse<unknown>> {
     try {
@@ -621,6 +648,40 @@ export class IntentIpcHost {
               buffer: toIpcSnapshot(this.service.getBuffer(bufferId)),
               tabs: this.shell.listTabs(),
             } satisfies PreviewRunIpcResult,
+          };
+        }
+        case "recovery_persist_quit": {
+          const preservedCount = await persistDirtyOnQuit(
+            this.shell,
+            this.recoveryStore,
+          );
+          return {
+            ok: true,
+            result: { preservedCount } satisfies RecoveryPersistQuitResult,
+          };
+        }
+        case "recovery_restore_launch": {
+          const restored = await restoreOnLaunch(
+            this.shell,
+            this.recoveryStore,
+          );
+          const id = this.shell.activeBufferId;
+          return {
+            ok: true,
+            result: {
+              restoredCount: restored.length,
+              buffer: id
+                ? toIpcSnapshot(this.service.getBuffer(id), false)
+                : null,
+              tabs: this.shell.listTabs(),
+            } satisfies RecoveryRestoreLaunchResult,
+          };
+        }
+        case "recovery_drop": {
+          await noteBufferSaved(this.recoveryStore, request.params.id);
+          return {
+            ok: true,
+            result: { dropped: true } satisfies RecoveryDropResult,
           };
         }
         default: {
