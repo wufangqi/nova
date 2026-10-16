@@ -346,13 +346,37 @@ button.close-prompt-secondary {
   min-width: 100%;
 }
 
+/* WUF-116: absolute overlay so .editor keeps width:100% (half-width chain intact). */
+.line-gutter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  min-width: 2.75rem;
+  padding: 0.85rem 0.45rem 0.85rem 0.35rem;
+  text-align: right;
+  pointer-events: none;
+  user-select: none;
+  background: #f3f1ec;
+  border-right: 1px solid #e4e0d8;
+  color: #8a857c;
+  font: 15px/22px "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+}
+
+.line-gutter-row {
+  height: 22px;
+  line-height: 22px;
+}
+
 .editor {
   display: block;
   width: 100%;
   min-width: 100%;
   min-height: 16rem;
   margin: 0;
-  padding: 0.85rem 1rem;
+  /* Left padding clears the gutter overlay so text stays readable. */
+  padding: 0.85rem 1rem 0.85rem 3.4rem;
   border: 0;
   resize: none;
   overflow: hidden;

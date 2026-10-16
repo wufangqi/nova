@@ -1726,6 +1726,7 @@ window.addEventListener("DOMContentLoaded", () => {
         return { revision: result.buffer.revision };
       },
     },
+    el("line-gutter"),
   );
   const editorEl = el<HTMLTextAreaElement>("editor");
   editorEl.addEventListener("paste", (ev) => {
