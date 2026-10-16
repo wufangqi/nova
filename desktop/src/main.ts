@@ -15,6 +15,12 @@ import {
   saveWithPicker,
   type FileOpsPort,
 } from "./file-ops.ts";
+import {
+  FindDialog,
+  type FindDialogFields,
+  type FindDialogPort,
+  type FindDialogSurface,
+} from "./find-dialog.ts";
 import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
@@ -321,6 +327,66 @@ const actionPort: ActionPanelPort = {
 
 const actionPanel = new ActionPanel(actionPort);
 
+/** Tauri invoke port for Find — same IPC methods as the contract tests inject. */
+const findPort: FindDialogPort = {
+  async find(params) {
+    const result = await invoke<FindIpcResult>("find_cmd", { params });
+    return { hits: result.hits, count: result.count };
+  },
+  async previewReplace(params) {
+    const result = await invoke<PreviewReplaceIpcResult>("preview_replace_cmd", {
+      params,
+    });
+    return { preview: result.preview };
+  },
+  async replaceAccept(params) {
+    const result = await invoke<ReplaceAcceptIpcResult>("replace_accept_cmd", {
+      params,
+    });
+    return { accept: result.accept };
+  },
+  async applyDraft(draft) {
+    await invoke<ApplyDraftIpcResult>("apply_draft_cmd", { draft });
+  },
+};
+
+function writeFindFieldsToDom(fields: FindDialogFields) {
+  el<HTMLInputElement>("find-pattern").value = fields.pattern;
+  el<HTMLInputElement>("find-replacement").value = fields.replacement;
+  el<HTMLInputElement>("find-flag-i").checked = !!fields.flags.i;
+  el<HTMLInputElement>("find-flag-m").checked = !!fields.flags.m;
+  el<HTMLInputElement>("find-flag-s").checked = !!fields.flags.s;
+}
+
+function readFindFieldsFromDom(): FindDialogFields {
+  return {
+    pattern: el<HTMLInputElement>("find-pattern").value,
+    replacement: el<HTMLInputElement>("find-replacement").value,
+    flags: {
+      i: el<HTMLInputElement>("find-flag-i").checked || undefined,
+      m: el<HTMLInputElement>("find-flag-m").checked || undefined,
+      s: el<HTMLInputElement>("find-flag-s").checked || undefined,
+    },
+  };
+}
+
+const findSurface: FindDialogSurface = {
+  present(fields) {
+    writeFindFieldsToDom(fields);
+    el<HTMLElement>("find-dialog").hidden = false;
+  },
+  dismiss() {
+    el<HTMLElement>("find-dialog").hidden = true;
+  },
+  focusPattern() {
+    const input = el<HTMLInputElement>("find-pattern");
+    input.focus();
+    input.select();
+  },
+};
+
+const findDialog = new FindDialog(findPort, findSurface);
+
 let activeId: string | null = null;
 let pendingPreviewId: string | null = null;
 let pendingPreviewKind: PreviewKindForSave = null;
@@ -467,17 +533,13 @@ function clearFindHits() {
   hitsEl.replaceChildren();
 }
 
-function fillFindBarFromDraft(draft: {
+async function fillFindBarFromDraft(draft: {
   pattern: string;
   replacement?: string;
   flags?: string;
 }) {
-  el<HTMLInputElement>("find-pattern").value = draft.pattern;
-  el<HTMLInputElement>("find-replacement").value = draft.replacement ?? "";
-  const flags = draft.flags ?? "";
-  el<HTMLInputElement>("find-flag-i").checked = flags.includes("i");
-  el<HTMLInputElement>("find-flag-m").checked = flags.includes("m");
-  el<HTMLInputElement>("find-flag-s").checked = flags.includes("s");
+  // Opens/focuses the modeless Find dialog; apply_draft stays on the IPC seam.
+  await findDialog.applyRegexDraft(draft);
 }
 
 function renderFindHits(hits: FindHit[], count: number) {
@@ -834,19 +896,18 @@ async function applyPreviewResult(
     return;
   }
 
-  // RegexDraft fills FindBar only — never Accepts into Buffer.
+  // RegexDraft fills Find dialog only — never Accepts into Buffer.
   const draft = preview.draft;
-  await invoke<ApplyDraftIpcResult>("apply_draft_cmd", { draft });
-  fillFindBarFromDraft(draft);
+  await fillFindBarFromDraft(draft);
   clearFindHits();
   diffEl.hidden = false;
-  diffEl.textContent = `RegexDraft filled FindBar: /${draft.pattern}/${draft.flags ?? ""}${
+  diffEl.textContent = `RegexDraft filled Find dialog: /${draft.pattern}/${draft.flags ?? ""}${
     draft.replacement !== undefined ? ` → ${JSON.stringify(draft.replacement)}` : ""
   }\nBuffer unchanged — use Find / Preview replace / Replace Accept, or Save as Action.`;
   setIntentActions({ accept: false, reject: true });
   setSaveAsActionEnabled(canOfferSaveAsAction("regex_draft"));
   setStatus(
-    "RegexDraft → FindBar (no Buffer write) — Save as Action to pin for reuse",
+    "RegexDraft → Find dialog (no Buffer write) — Save as Action to pin for reuse",
   );
 }
 
@@ -1322,6 +1383,11 @@ window.addEventListener("DOMContentLoaded", () => {
       ev.preventDefault();
       el<HTMLInputElement>("goto-line").focus();
     }
+    if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "f") {
+      ev.preventDefault();
+      findDialog.setFields(readFindFieldsFromDom());
+      findDialog.focusPattern();
+    }
   });
 
   el<HTMLButtonElement>("intent-preview").addEventListener("click", () => {
@@ -1355,18 +1421,29 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  el<HTMLButtonElement>("find-open").addEventListener("click", () => {
+    findDialog.setFields(readFindFieldsFromDom());
+    findDialog.focusPattern();
+  });
+  el<HTMLButtonElement>("find-close").addEventListener("click", () => {
+    findDialog.closeDialog();
+  });
   el<HTMLButtonElement>("find-go").addEventListener("click", () => {
+    findDialog.setFields(readFindFieldsFromDom());
     void runFind();
   });
   el<HTMLButtonElement>("find-preview-replace").addEventListener("click", () => {
+    findDialog.setFields(readFindFieldsFromDom());
     void previewFindReplace();
   });
   el<HTMLButtonElement>("find-replace-accept").addEventListener("click", () => {
+    findDialog.setFields(readFindFieldsFromDom());
     void acceptFindReplace();
   });
   el<HTMLInputElement>("find-pattern").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
+      findDialog.setFields(readFindFieldsFromDom());
       void runFind();
     }
   });

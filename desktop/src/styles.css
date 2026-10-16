@@ -17,8 +17,9 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto auto;
   min-height: 100vh;
+  position: relative;
 }
 
 .toolbar {
@@ -183,13 +184,60 @@ button.tab.active {
   background: #fff;
 }
 
+/* Modeless Find window — floats over chrome; does not block the editor. */
+.find-dialog {
+  position: absolute;
+  z-index: 20;
+  right: 0.75rem;
+  bottom: 8.5rem;
+  width: min(36rem, calc(100% - 1.5rem));
+  border: 1px solid #8a8478;
+  border-radius: 4px;
+  background: #e2e6e0;
+  box-shadow: 0 4px 18px rgba(28, 28, 28, 0.18);
+}
+
+.find-dialog[hidden] {
+  display: none !important;
+}
+
+.find-dialog-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  background: #cfd4ce;
+  border-bottom: 1px solid #bdb7aa;
+  border-radius: 4px 4px 0 0;
+  cursor: default;
+  user-select: none;
+}
+
+.find-dialog-title {
+  font-weight: 650;
+  font-size: 0.92rem;
+}
+
+.find-dialog-chrome #find-close {
+  padding: 0.1rem 0.45rem;
+  line-height: 1.2;
+  background: transparent;
+  color: #1c1c1c;
+  border-color: transparent;
+}
+
+.find-dialog-chrome #find-close:hover {
+  background: #b8beb7;
+}
+
 .find-panel {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.55rem 0.75rem;
-  background: #e2e6e0;
-  border-top: 1px solid #bdb7aa;
+  background: transparent;
+  border-top: none;
 }
 
 .find-bar {
