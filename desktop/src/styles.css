@@ -46,8 +46,14 @@ body {
   padding: 0.35rem 0.5rem;
   border: 1px solid #a9a296;
   border-radius: 3px;
-  background: #fff;
+  background: #f3f1ec;
+  color: #3a3a3a;
   font: inherit;
+  cursor: default;
+}
+
+.path-field input[readonly] {
+  user-select: text;
 }
 
 button {

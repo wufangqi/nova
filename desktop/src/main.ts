@@ -10,11 +10,43 @@ import {
   type PreviewKindForSave,
 } from "./action-ui.ts";
 import {
-  chooseSaveAction,
-  pathInputValueForActive,
-} from "./path-toolbar.ts";
+  openWithPicker,
+  saveAsWithPicker,
+  saveWithPicker,
+  type FileOpsPort,
+} from "./file-ops.ts";
+import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
+import { createTauriPathPicker } from "./tauri-path-picker.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
+
+const pathPicker = createTauriPathPicker();
+
+const fileOpsPort: FileOpsPort = {
+  async getActiveTab() {
+    const tabs = await invoke<ShellTabsResult>("list_tabs_cmd");
+    const active = tabs.tabs.find((t) => t.active);
+    if (!active) return undefined;
+    return { path: active.path, untitled: active.untitled };
+  },
+  async openPath(path) {
+    const result = await invoke<ShellBufferResult>("open_path_cmd", { path });
+    await applyState(result.buffer, result.tabs);
+    clearPreviewPanel();
+    clearSuggestionsBar();
+    clearFindHits();
+  },
+  async saveActive() {
+    const result = await invoke<ShellTabsResult>("save_active_cmd");
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, result.tabs);
+  },
+  async saveActiveAs(path) {
+    const result = await invoke<ShellTabsResult>("save_active_as_cmd", { path });
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, result.tabs);
+  },
+};
 
 /** Mirrors nova `GLOBAL_HOTKEY_ACCELERATOR` / Tauri registration. */
 const GLOBAL_HOTKEY_ACCELERATOR = "Ctrl+Alt+N";
@@ -294,7 +326,6 @@ let pendingPreviewId: string | null = null;
 let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
-let lastFindHits: FindHit[] = [];
 let virtualEditor: VirtualEditor;
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -431,7 +462,6 @@ function setFindReplaceAccept(enabled: boolean) {
 
 function clearFindHits() {
   setFindReplaceAccept(false);
-  lastFindHits = [];
   const hitsEl = el<HTMLElement>("find-hits");
   hitsEl.hidden = true;
   hitsEl.replaceChildren();
@@ -451,7 +481,6 @@ function fillFindBarFromDraft(draft: {
 }
 
 function renderFindHits(hits: FindHit[], count: number) {
-  lastFindHits = hits;
   const hitsEl = el<HTMLElement>("find-hits");
   hitsEl.hidden = false;
   hitsEl.replaceChildren();
@@ -583,45 +612,57 @@ async function gotoLine() {
 }
 
 async function openPath() {
-  const path = el<HTMLInputElement>("path-input").value.trim();
-  if (!path) {
-    setStatus("Enter a Path to open");
-    return;
-  }
   try {
-    const result = await invoke<ShellBufferResult>("open_path_cmd", { path });
-    await applyState(result.buffer, result.tabs);
-    clearPreviewPanel();
-    clearSuggestionsBar();
-    clearFindHits();
-    setStatus(`Opened ${path}`);
+    const outcome = await openWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled") {
+      setStatus("Open cancelled");
+      return;
+    }
+    if (outcome.kind === "opened") {
+      setStatus(`Opened ${outcome.path}`);
+    }
   } catch (err) {
     setStatus(String(err));
   }
 }
 
 async function save() {
-  const pathInput = el<HTMLInputElement>("path-input");
-  const tabs = await invoke<ShellTabsResult>("list_tabs_cmd");
-  const active = tabs.tabs.find((t) => t.active);
-  const action = chooseSaveAction(active, pathInput.value);
   try {
-    let result: ShellTabsResult;
-    if (action === "need_path") {
-      setStatus("Enter a Path to save (untitled Buffer needs save-as)");
+    const outcome = await saveWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled") {
+      setStatus("Save As cancelled");
       return;
     }
-    if (action === "save") {
-      result = await invoke<ShellTabsResult>("save_active_cmd");
-      setStatus(`Saved ${active!.path}`);
-    } else {
-      result = await invoke<ShellTabsResult>("save_active_as_cmd", {
-        path: action.saveAs,
-      });
-      setStatus(`Saved as ${action.saveAs}`);
+    if (outcome.kind === "no_active") {
+      setStatus("No Buffer to save");
+      return;
     }
-    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    await applyState(state.buffer, result.tabs);
+    if (outcome.kind === "saved") {
+      setStatus(`Saved ${outcome.path}`);
+      return;
+    }
+    if (outcome.kind === "saved_as") {
+      setStatus(`Saved as ${outcome.path}`);
+    }
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
+async function saveAsPath() {
+  try {
+    const outcome = await saveAsWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled") {
+      setStatus("Save As cancelled");
+      return;
+    }
+    if (outcome.kind === "no_active") {
+      setStatus("No Buffer to save");
+      return;
+    }
+    if (outcome.kind === "saved_as") {
+      setStatus(`Saved as ${outcome.path}`);
+    }
   } catch (err) {
     setStatus(String(err));
   }
@@ -1235,6 +1276,9 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   el<HTMLButtonElement>("save").addEventListener("click", () => {
     void save();
+  });
+  el<HTMLButtonElement>("save-as").addEventListener("click", () => {
+    void saveAsPath();
   });
   el<HTMLButtonElement>("close-tab").addEventListener("click", () => {
     void closeActive();

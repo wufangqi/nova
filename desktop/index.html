@@ -21,10 +21,18 @@
         </button>
         <label class="path-field">
           <span>Path</span>
-          <input id="path-input" type="text" placeholder="C:\notes\demo.txt" spellcheck="false" />
+          <input
+            id="path-input"
+            type="text"
+            readonly
+            placeholder="(untitled)"
+            spellcheck="false"
+            title="Path is display-only — use Open / Save / Save As"
+          />
         </label>
         <button type="button" id="open-path">Open</button>
         <button type="button" id="save">Save</button>
+        <button type="button" id="save-as">Save As</button>
         <button type="button" id="close-tab">Close</button>
       </header>
 

@@ -339,6 +339,7 @@ fn evoke_from_hotkey(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let resource_dir = app.path().resource_dir().ok();
             let bridge = IntentBridge::spawn(resource_dir).map_err(|e| {
