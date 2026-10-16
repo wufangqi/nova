@@ -110,6 +110,20 @@ export class EditorShell {
   }
 
   /**
+   * Restore a RecoveryBuffer as an editable tab.
+   * Optional Path is bound for later Save, but content stays dirty until Save.
+   * Does not invent Paths for untitled recoveries.
+   */
+  restoreRecovered(text: string, path: string | null): BufferSnapshot {
+    const buf = this.intent.createBuffer(text);
+    this.registerTab(buf, path);
+    // Recovered content is unsaved relative to disk / untitled baseline.
+    const tab = this.requireTab(buf.id);
+    tab.savedRev = this.intent.rev(buf.id) - 1;
+    return this.intent.getBuffer(buf.id);
+  }
+
+  /**
    * Open a Path. UTF-8 without BOM → Rust core (JS never holds the body).
    * BOM / non-UTF-8 → decode in JS then createBuffer (Encoding contract path);
    * returned snapshot still omits text.

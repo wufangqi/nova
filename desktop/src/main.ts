@@ -24,7 +24,6 @@ import {
 } from "./find-dialog.ts";
 import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
-import {
 import { closeTabWithPrompter, type TabClosePort } from "./tab-close.ts";
 import {
   SHELL_FILE_MENU_ITEMS,
