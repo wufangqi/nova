@@ -17,9 +17,79 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto auto;
+  grid-template-rows: auto auto auto auto 1fr auto auto auto;
   min-height: 100vh;
   position: relative;
+}
+
+.menubar {
+  display: flex;
+  align-items: stretch;
+  gap: 0.15rem;
+  padding: 0.15rem 0.35rem;
+  background: #e8e4dc;
+  border-bottom: 1px solid #bdb7aa;
+}
+
+.menu {
+  position: relative;
+}
+
+.menu > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.25rem 0.55rem;
+  border-radius: 2px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu > summary:hover,
+.menu[open] > summary {
+  background: #d2cdc3;
+}
+
+.menu > ul {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  min-width: 12rem;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: #f7f5f0;
+  border: 1px solid #a9a296;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.menu > ul button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.35rem 0.75rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #1c1c1c;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu > ul button:hover {
+  background: #2f2f2f;
+  color: #fff;
+}
+
+.menu > ul button .accel {
+  opacity: 0.65;
+  font-size: 0.85em;
 }
 
 .toolbar {

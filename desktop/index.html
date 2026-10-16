@@ -10,11 +10,18 @@
 
   <body>
     <div class="app">
+      <nav class="menubar" aria-label="Menu">
+        <details class="menu" id="file-menu">
+          <summary>File</summary>
+          <ul role="menu" id="file-menu-list"></ul>
+        </details>
+      </nav>
       <header class="toolbar">
-        <button type="button" id="new-tab">New</button>
+        <button type="button" id="new-tab" data-shell-action="new">New</button>
         <button
           type="button"
           id="run-demo"
+          data-shell-action="demo"
           title="Visual ten-second Demo: new Buffer → paste → Intent → diff → Accept"
         >
           Demo
@@ -30,10 +37,17 @@
             title="Path is display-only — use Open / Save / Save As"
           />
         </label>
-        <button type="button" id="open-path">Open</button>
-        <button type="button" id="save">Save</button>
-        <button type="button" id="save-as">Save As</button>
-        <button type="button" id="find-open" title="Find (Ctrl+F)">Find</button>
+        <button type="button" id="open-path" data-shell-action="open">Open</button>
+        <button type="button" id="save" data-shell-action="save">Save</button>
+        <button type="button" id="save-as" data-shell-action="save_as">Save As</button>
+        <button
+          type="button"
+          id="find-open"
+          data-shell-action="find"
+          title="Find (Ctrl+F)"
+        >
+          Find
+        </button>
         <button type="button" id="close-tab">Close</button>
       </header>
 
