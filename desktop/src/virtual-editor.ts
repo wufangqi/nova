@@ -8,6 +8,11 @@ import {
   caretLocalOffset,
   type CaretWindowContext,
 } from "./status-metrics.ts";
+import {
+  lineGutterLabels,
+  mountedLineCountFromText,
+  paintLineGutter,
+} from "./line-gutter.ts";
 
 export const LINE_HEIGHT_PX = 22;
 export const OVERSCAN_LINES = 40;
@@ -86,6 +91,7 @@ export class VirtualEditor {
     private readonly windowEl: HTMLElement,
     private readonly textarea: HTMLTextAreaElement,
     private readonly host: VirtualEditorHost,
+    private readonly gutterEl: HTMLElement | null = null,
   ) {
     this.viewport.addEventListener("scroll", () => {
       void this.onScroll();
@@ -145,6 +151,24 @@ export class VirtualEditor {
   }
 
   /**
+   * Mounted window start (0-based) after the last syncWindow — same value the
+   * gutter uses for 1-based labels. Null when no Buffer is bound.
+   */
+  get windowLineStart0(): number | null {
+    if (!this.bufferId) return null;
+    return this.firstLine;
+  }
+
+  /** 1-based gutter labels for the currently mounted window (empty if unbound). */
+  gutterLabelsSnapshot(): string[] {
+    if (!this.bufferId) return [];
+    return lineGutterLabels(
+      this.firstLine,
+      mountedLineCountFromText(this.localText),
+    );
+  }
+
+  /**
    * Caret + mounted window fields for status-metrics (pure mapper inputs).
    * Null when no Buffer is bound. Caret follows selection direction (not always start).
    */
@@ -184,6 +208,7 @@ export class VirtualEditor {
       this.windowEl.style.top = "0px";
       this.applyingRemote = false;
       this.setEnabled(false);
+      this.refreshGutter();
       return;
     }
     const same =
@@ -320,6 +345,12 @@ export class VirtualEditor {
       this.textarea.setSelectionRange(selStart, selEnd);
     }
     this.applyingRemote = false;
+    this.refreshGutter();
+  }
+
+  private refreshGutter() {
+    if (!this.gutterEl) return;
+    paintLineGutter(this.gutterEl, this.gutterLabelsSnapshot());
   }
 
   private async flushEdit() {
@@ -353,6 +384,7 @@ export class VirtualEditor {
       this.applyingRemote = true;
       this.textarea.setSelectionRange(caret, caret);
       this.applyingRemote = false;
+      this.refreshGutter();
     } catch (err) {
       // Re-sync from core on failure.
       await this.syncWindow();
