@@ -72,18 +72,38 @@ export function formatStatusMetrics(metrics: StatusMetrics): StatusMetricsLabels
   };
 }
 
-/**
- * Derive 1-based line/column from a mounted line window + absolute caret.
- * Returns null when the caret lies outside the window.
- */
-export function caretLineColumnInWindow(input: {
+/** Mounted window + absolute caret — shared by VirtualEditor and line/col mapper. */
+export type CaretWindowContext = {
   windowText: string;
   /** 0-based first Buffer line index covered by windowText */
   windowLineStart: number;
   /** Absolute offset of windowText[0] in the Buffer */
   windowStartOffset: number;
   caretOffset: number;
-}): { line: number; column: number } | null {
+};
+
+/**
+ * Local caret offset inside a textarea selection.
+ * Collapsed → either side. Non-collapsed → end when forward/none, start when backward.
+ * (HTML: forward selection keeps caret at selectionEnd; Find jumps use forward.)
+ */
+export function caretLocalOffset(sel: {
+  selectionStart: number;
+  selectionEnd: number;
+  selectionDirection: "forward" | "backward" | "none";
+}): number {
+  if (sel.selectionStart === sel.selectionEnd) return sel.selectionStart;
+  if (sel.selectionDirection === "backward") return sel.selectionStart;
+  return sel.selectionEnd;
+}
+
+/**
+ * Derive 1-based line/column from a mounted line window + absolute caret.
+ * Returns null when the caret lies outside the window.
+ */
+export function caretLineColumnInWindow(
+  input: CaretWindowContext,
+): { line: number; column: number } | null {
   const local = input.caretOffset - input.windowStartOffset;
   if (local < 0 || local > input.windowText.length) return null;
   const before = input.windowText.slice(0, local);

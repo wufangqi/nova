@@ -4,6 +4,11 @@
  * Never mounts full Buffer text in the DOM.
  */
 
+import {
+  caretLocalOffset,
+  type CaretWindowContext,
+} from "./status-metrics.ts";
+
 export const LINE_HEIGHT_PX = 22;
 export const OVERSCAN_LINES = 40;
 
@@ -141,20 +146,24 @@ export class VirtualEditor {
 
   /**
    * Caret + mounted window fields for status-metrics (pure mapper inputs).
-   * Null when no Buffer is bound.
+   * Null when no Buffer is bound. Caret follows selection direction (not always start).
    */
-  caretWindowContext(): {
-    windowText: string;
-    windowLineStart: number;
-    windowStartOffset: number;
-    caretOffset: number;
-  } | null {
+  caretWindowContext(): CaretWindowContext | null {
     if (!this.bufferId) return null;
+    const direction = this.textarea.selectionDirection;
+    const local = caretLocalOffset({
+      selectionStart: this.textarea.selectionStart,
+      selectionEnd: this.textarea.selectionEnd,
+      selectionDirection:
+        direction === "backward" || direction === "forward"
+          ? direction
+          : "none",
+    });
     return {
       windowText: this.localText,
       windowLineStart: this.firstLine,
       windowStartOffset: this.windowStartOffset,
-      caretOffset: this.windowStartOffset + this.textarea.selectionStart,
+      caretOffset: this.windowStartOffset + local,
     };
   }
 

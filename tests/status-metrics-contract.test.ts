@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   caretLineColumnInWindow,
+  caretLocalOffset,
   formatStatusMetrics,
   mapStatusMetrics,
 } from "../desktop/src/status-metrics.ts";
@@ -110,6 +111,49 @@ describe("formatStatusMetrics — display labels", () => {
         column: "5",
         offset: "4",
       },
+    );
+  });
+});
+
+describe("caretLocalOffset — selection direction → caret end", () => {
+  it("uses either side when the selection is collapsed", () => {
+    assert.equal(
+      caretLocalOffset({
+        selectionStart: 4,
+        selectionEnd: 4,
+        selectionDirection: "none",
+      }),
+      4,
+    );
+  });
+
+  it("uses selectionEnd for forward (and none) non-collapsed selections", () => {
+    assert.equal(
+      caretLocalOffset({
+        selectionStart: 2,
+        selectionEnd: 8,
+        selectionDirection: "forward",
+      }),
+      8,
+    );
+    assert.equal(
+      caretLocalOffset({
+        selectionStart: 2,
+        selectionEnd: 8,
+        selectionDirection: "none",
+      }),
+      8,
+    );
+  });
+
+  it("uses selectionStart for backward non-collapsed selections", () => {
+    assert.equal(
+      caretLocalOffset({
+        selectionStart: 2,
+        selectionEnd: 8,
+        selectionDirection: "backward",
+      }),
+      2,
     );
   });
 });

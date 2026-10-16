@@ -23,6 +23,7 @@ import {
   type FindDialogPort,
   type FindDialogSurface,
 } from "./find-dialog.ts";
+import { GotoLinePopup, type GotoLinePopupSurface } from "./goto-line-popup.ts";
 import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
 import { closeTabWithPrompter, type TabClosePort } from "./tab-close.ts";
@@ -40,6 +41,18 @@ import {
   mapStatusMetrics,
   type StatusMetrics,
 } from "./status-metrics.ts";
+import {
+  TITLE_DRAG_THRESHOLD_PX,
+  formatTitle,
+  handleTitleClick,
+  onTitleDoubleClick,
+  onTitleDragThreshold,
+  syncWindowTitle,
+  titleChromeFeedback,
+  titleChromeStateFromTab,
+  type TitleChromeState,
+  type TitleChromeWindowPort,
+} from "./title-chrome.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
 import { runWindowQuitRecovery } from "./window-quit.ts";
 
@@ -457,6 +470,7 @@ let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
 let virtualEditor: VirtualEditor;
+let gotoLinePopup: GotoLinePopup;
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing #${id}`);
@@ -494,14 +508,20 @@ async function refreshStatusMetrics() {
     );
     return;
   }
+  // Length and lineCount from the same IPC host so edits refresh both immediately
+  // (VirtualEditor.totalLines may still be stale until flushEdit finishes).
   let length = 0;
+  let lineCount = 0;
   try {
-    const lenRes = await invoke<{ len: number }>("buffer_len_cmd", {
-      id: activeId,
-    });
+    const [lenRes, linesRes] = await Promise.all([
+      invoke<{ len: number }>("buffer_len_cmd", { id: activeId }),
+      invoke<{ lineCount: number }>("buffer_line_count_cmd", { id: activeId }),
+    ]);
     length = lenRes.len;
+    lineCount = linesRes.lineCount;
   } catch {
     length = 0;
+    lineCount = 0;
   }
   if (token !== metricsRefreshToken) return;
   const ctx = virtualEditor.caretWindowContext();
@@ -510,7 +530,7 @@ async function refreshStatusMetrics() {
     mapStatusMetrics({
       hasBuffer: true,
       length,
-      lineCount: virtualEditor.lineCountSnapshot,
+      lineCount,
       caretOffset: ctx?.caretOffset ?? null,
       caretLine: pos?.line ?? null,
       caretColumn: pos?.column ?? null,
@@ -610,6 +630,104 @@ function renderTabs(tabs: TabInfo[]) {
   }
 }
 
+let currentTitleState: TitleChromeState = { path: null, dirty: false };
+let titleFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+let titleClickSuppressUntil = 0;
+
+function titleWindowPort(): TitleChromeWindowPort {
+  const win = getCurrentWindow();
+  return {
+    startDragging: () => win.startDragging(),
+    toggleMaximize: () => win.toggleMaximize(),
+  };
+}
+
+function showTitleFeedback(text: string, kind: "copied" | "no_path") {
+  const chip = document.getElementById("title-chrome-feedback");
+  if (!chip) return;
+  chip.textContent = text;
+  chip.hidden = false;
+  chip.dataset.kind = kind;
+  if (titleFeedbackTimer) clearTimeout(titleFeedbackTimer);
+  titleFeedbackTimer = setTimeout(() => {
+    chip.hidden = true;
+    chip.textContent = "";
+    delete chip.dataset.kind;
+  }, 1500);
+}
+
+async function syncTitleChrome(active: TabInfo | undefined) {
+  currentTitleState = titleChromeStateFromTab(active);
+  const title = formatTitle(currentTitleState);
+  const label = document.getElementById("title-chrome-label");
+  if (label) label.textContent = title;
+  try {
+    await syncWindowTitle(currentTitleState, {
+      setTitle: (t) => getCurrentWindow().setTitle(t),
+    });
+  } catch {
+    /* non-Tauri / capability missing — contract covers the seam */
+  }
+}
+
+function mountTitleChrome() {
+  const region = document.getElementById("title-chrome");
+  if (!region) return;
+
+  let press: { x: number; y: number; dragging: boolean } | null = null;
+
+  region.addEventListener("dblclick", (ev) => {
+    ev.preventDefault();
+    titleClickSuppressUntil = Date.now() + 400;
+    press = null;
+    void onTitleDoubleClick(titleWindowPort()).catch(() => {
+      /* best-effort outside Tauri */
+    });
+  });
+
+  region.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    press = { x: ev.clientX, y: ev.clientY, dragging: false };
+    try {
+      region.setPointerCapture(ev.pointerId);
+    } catch {
+      /* capture optional */
+    }
+  });
+
+  region.addEventListener("pointermove", (ev) => {
+    if (!press || press.dragging) return;
+    const dx = ev.clientX - press.x;
+    const dy = ev.clientY - press.y;
+    if (Math.hypot(dx, dy) < TITLE_DRAG_THRESHOLD_PX) return;
+    press.dragging = true;
+    void onTitleDragThreshold(titleWindowPort()).catch(() => {
+      /* best-effort outside Tauri */
+    });
+  });
+
+  region.addEventListener("pointerup", () => {
+    if (!press) return;
+    const wasDrag = press.dragging;
+    press = null;
+    if (wasDrag || Date.now() < titleClickSuppressUntil) return;
+    void handleTitleClick(currentTitleState, {
+      writeClipboard: (text) => navigator.clipboard.writeText(text),
+    })
+      .then((result) => {
+        showTitleFeedback(
+          titleChromeFeedback(result),
+          result.ok ? "copied" : "no_path",
+        );
+      })
+      .catch((err) => setStatus(String(err)));
+  });
+
+  region.addEventListener("pointercancel", () => {
+    press = null;
+  });
+}
+
 async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
   const pathInput = el<HTMLInputElement>("path-input");
   activeId = buffer?.id ?? null;
@@ -618,6 +736,7 @@ async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
   const active = tabs.find((t) => t.active);
   // Always sync — untitled must clear so Save cannot reuse another tab's Path.
   pathInput.value = pathInputValueForActive(active);
+  await syncTitleChrome(active);
   await refreshStatusMetrics();
 }
 
@@ -799,15 +918,14 @@ async function activateTab(id: string) {
   setStatus(`Switched to ${result.tabs.find((t) => t.active)?.title ?? id}`);
 }
 
-async function gotoLine() {
-  const raw = el<HTMLInputElement>("goto-line").value.trim();
-  const line = Number.parseInt(raw, 10);
-  if (!Number.isFinite(line) || line < 1) {
+async function submitGotoLine() {
+  const raw = el<HTMLInputElement>("goto-line").value;
+  const result = await gotoLinePopup.submit(raw);
+  if (!result.ok) {
     setStatus("Enter a 1-based line number");
     return;
   }
-  await virtualEditor.gotoLine(line);
-  setStatus(`Went to line ${line}`);
+  setStatus(`Went to line ${result.line}`);
   await refreshStatusMetrics();
 }
 
@@ -1557,6 +1675,7 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   mountFileMenu(shellHandlers);
+  mountTitleChrome();
 
   for (const node of document.querySelectorAll<HTMLElement>(
     ".toolbar [data-shell-action]",
@@ -1600,6 +1719,9 @@ window.addEventListener("DOMContentLoaded", () => {
         });
         renderTabs(result.tabs);
         activeId = result.buffer.id;
+        await syncTitleChrome(result.tabs.find((t) => t.active));
+        // Metrics refresh after VirtualEditor updates lineCount (see flushEdit);
+        // also refresh here for length/caret when no further selection event fires.
         void refreshStatusMetrics();
         return { revision: result.buffer.revision };
       },
@@ -1620,19 +1742,47 @@ window.addEventListener("DOMContentLoaded", () => {
       void refreshStatusMetrics();
     }
   });
-  el<HTMLButtonElement>("goto-line-go").addEventListener("click", () => {
-    void gotoLine();
-  });
+  const gotoSurface: GotoLinePopupSurface = {
+    present() {
+      el<HTMLElement>("goto-line-popup").hidden = false;
+      el<HTMLInputElement>("goto-line").value = "";
+    },
+    dismiss() {
+      el<HTMLElement>("goto-line-popup").hidden = true;
+    },
+    focusInput() {
+      const input = el<HTMLInputElement>("goto-line");
+      input.focus();
+      input.select();
+    },
+  };
+  gotoLinePopup = new GotoLinePopup(
+    {
+      async gotoLine(line) {
+        await virtualEditor.gotoLine(line);
+        await refreshStatusMetrics();
+      },
+    },
+    gotoSurface,
+  );
   el<HTMLInputElement>("goto-line").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
-      void gotoLine();
+      void submitGotoLine();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      gotoLinePopup.closePopup();
     }
   });
   window.addEventListener("keydown", (ev) => {
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "g") {
       ev.preventDefault();
-      el<HTMLInputElement>("goto-line").focus();
+      gotoLinePopup.openPopup();
+      return;
+    }
+    if (ev.key === "Escape" && gotoLinePopup.isOpen()) {
+      ev.preventDefault();
+      gotoLinePopup.closePopup();
       return;
     }
     const shellAction = resolveShellShortcut(ev);

@@ -15,7 +15,8 @@
       {
         "title": "Nova",
         "width": 900,
-        "height": 640
+        "height": 640,
+        "decorations": false
       }
     ],
     "security": {
