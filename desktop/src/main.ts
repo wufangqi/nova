@@ -23,6 +23,7 @@ import {
   type FindDialogPort,
   type FindDialogSurface,
 } from "./find-dialog.ts";
+import { GotoLinePopup, type GotoLinePopupSurface } from "./goto-line-popup.ts";
 import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
 import { closeTabWithPrompter, type TabClosePort } from "./tab-close.ts";
@@ -463,6 +464,7 @@ let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
 let virtualEditor: VirtualEditor;
+let gotoLinePopup: GotoLinePopup;
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
   if (!node) throw new Error(`missing #${id}`);
@@ -852,15 +854,14 @@ async function activateTab(id: string) {
   setStatus(`Switched to ${result.tabs.find((t) => t.active)?.title ?? id}`);
 }
 
-async function gotoLine() {
-  const raw = el<HTMLInputElement>("goto-line").value.trim();
-  const line = Number.parseInt(raw, 10);
-  if (!Number.isFinite(line) || line < 1) {
+async function submitGotoLine() {
+  const raw = el<HTMLInputElement>("goto-line").value;
+  const result = await gotoLinePopup.submit(raw);
+  if (!result.ok) {
     setStatus("Enter a 1-based line number");
     return;
   }
-  await virtualEditor.gotoLine(line);
-  setStatus(`Went to line ${line}`);
+  setStatus(`Went to line ${result.line}`);
 }
 
 async function openPath() {
@@ -1661,19 +1662,46 @@ window.addEventListener("DOMContentLoaded", () => {
   el<HTMLTextAreaElement>("editor").addEventListener("paste", (ev) => {
     void onEditorPaste(ev);
   });
-  el<HTMLButtonElement>("goto-line-go").addEventListener("click", () => {
-    void gotoLine();
-  });
+  const gotoSurface: GotoLinePopupSurface = {
+    present() {
+      el<HTMLElement>("goto-line-popup").hidden = false;
+      el<HTMLInputElement>("goto-line").value = "";
+    },
+    dismiss() {
+      el<HTMLElement>("goto-line-popup").hidden = true;
+    },
+    focusInput() {
+      const input = el<HTMLInputElement>("goto-line");
+      input.focus();
+      input.select();
+    },
+  };
+  gotoLinePopup = new GotoLinePopup(
+    {
+      gotoLine(line) {
+        return virtualEditor.gotoLine(line);
+      },
+    },
+    gotoSurface,
+  );
   el<HTMLInputElement>("goto-line").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
-      void gotoLine();
+      void submitGotoLine();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      gotoLinePopup.closePopup();
     }
   });
   window.addEventListener("keydown", (ev) => {
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "g") {
       ev.preventDefault();
-      el<HTMLInputElement>("goto-line").focus();
+      gotoLinePopup.openPopup();
+      return;
+    }
+    if (ev.key === "Escape" && gotoLinePopup.isOpen()) {
+      ev.preventDefault();
+      gotoLinePopup.closePopup();
       return;
     }
     const shellAction = resolveShellShortcut(ev);
