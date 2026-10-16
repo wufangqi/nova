@@ -94,7 +94,11 @@ export function runTenSecondDemo(
 
   shell.editActive(pasteText);
   steps.push("paste");
-  const textBefore = shell.getActiveBuffer().text;
+  const activeId = shell.activeBufferId!;
+  const textBefore = (() => {
+    const n = intent.len(activeId);
+    return n === 0 ? "" : intent.slice(activeId, 0, n);
+  })();
 
   const selection =
     options.selection ??
@@ -134,7 +138,10 @@ export function runTenSecondDemo(
     };
   }
 
-  const textAfter = shell.getActiveBuffer().text;
+  const textAfter = (() => {
+    const n = intent.len(activeId);
+    return n === 0 ? "" : intent.slice(activeId, 0, n);
+  })();
   const modelPath: "local_preinstalled" | "cloud" | "unavailable" =
     !modelAvailable
       ? "unavailable"

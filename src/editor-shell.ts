@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { open as fsOpen, readFile, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { decodeBytes, encodeText } from "./encoding.js";
 import { IntentService } from "./intent-service.js";
@@ -24,8 +24,8 @@ export type CloseResult = CloseOk | CloseAsk;
 interface TabState {
   bufferId: BufferId;
   path: string | null;
-  /** Last persisted logical text (LF-normalized). */
-  savedText: string;
+  /** Revision at last save / open — dirty when core rev differs (no full-text compare). */
+  savedRev: number;
   savedEncoding: string;
   savedEol: BufferSnapshot["eol"];
   savedBom: boolean;
@@ -35,6 +35,8 @@ interface TabState {
  * Notepad-like shell: open Buffers as tabs, hotkey evoke, Path open/save, close prompts.
  * No Workspace / Project / Session noun — just a list of open Buffers.
  * Path IO respects Buffer Encoding / EOL / BOM metadata (WUF-73).
+ * UTF-8 without BOM opens via Rust core (no JS body); other encodings decode in JS
+ * only to seed the core, then snapshots omit text (WUF-99).
  */
 export class EditorShell {
   private readonly intent: IntentService;
@@ -46,6 +48,11 @@ export class EditorShell {
     this.intent = intent ?? new IntentService();
   }
 
+  /** Test / gate access to the IntentService behind this shell. */
+  intentService(): IntentService {
+    return this.intent;
+  }
+
   get activeBufferId(): BufferId | null {
     return this.activeId;
   }
@@ -53,16 +60,7 @@ export class EditorShell {
   /** Global hotkey handler: always spawn a new untitled Buffer; keep existing tabs. */
   evokeNewUntitled(): BufferSnapshot {
     const buf = this.intent.createBuffer("");
-    this.tabs.set(buf.id, {
-      bufferId: buf.id,
-      path: null,
-      savedText: "",
-      savedEncoding: buf.encoding,
-      savedEol: buf.eol,
-      savedBom: buf.bom,
-    });
-    this.order.push(buf.id);
-    this.activeId = buf.id;
+    this.registerTab(buf, null);
     return buf;
   }
 
@@ -80,6 +78,7 @@ export class EditorShell {
     return this.tabInfo(bufferId);
   }
 
+  /** Meta snapshot only — callers that need body use slice / lineWindow / len. */
   getActiveBuffer(): BufferSnapshot {
     if (!this.activeId) throw new Error("no active Buffer");
     return this.intent.getBuffer(this.activeId);
@@ -95,12 +94,37 @@ export class EditorShell {
     return this.intent.editBuffer(this.activeId, text);
   }
 
+  /** Span edit on the active Buffer (virtual-scroll / large-file typing path). */
+  editActiveRange(
+    start: number,
+    end: number,
+    replacement: string,
+  ): BufferSnapshot {
+    if (!this.activeId) throw new Error("no active Buffer");
+    return this.intent.editBufferRange(this.activeId, start, end, replacement);
+  }
+
   editBuffer(bufferId: BufferId, text: string): BufferSnapshot {
     this.requireTab(bufferId);
     return this.intent.editBuffer(bufferId, text);
   }
 
+  /**
+   * Open a Path. UTF-8 without BOM → Rust core (JS never holds the body).
+   * BOM / non-UTF-8 → decode in JS then createBuffer (Encoding contract path);
+   * returned snapshot still omits text.
+   */
   async openPath(path: string): Promise<BufferSnapshot> {
+    if (await shouldOpenViaCore(path)) {
+      try {
+        const buf = this.intent.openPath(path);
+        this.registerTab(buf, path);
+        return buf;
+      } catch {
+        // Invalid UTF-8 (e.g. GBK) → Encoding decode path below.
+      }
+    }
+
     const bytes = await readFile(path);
     const decoded = decodeBytes(bytes);
     const buf = this.intent.createBuffer(decoded.text, {
@@ -108,17 +132,21 @@ export class EditorShell {
       eol: decoded.eol,
       bom: decoded.bom,
     });
+    this.registerTab(buf, path);
+    return buf;
+  }
+
+  private registerTab(buf: BufferSnapshot, path: string | null): void {
     this.tabs.set(buf.id, {
       bufferId: buf.id,
       path,
-      savedText: buf.text,
+      savedRev: this.intent.rev(buf.id),
       savedEncoding: buf.encoding,
       savedEol: buf.eol,
       savedBom: buf.bom,
     });
     this.order.push(buf.id);
     this.activeId = buf.id;
-    return buf;
   }
 
   async saveActive(): Promise<void> {
@@ -176,9 +204,22 @@ export class EditorShell {
     bufferId: BufferId,
     path: string,
   ): Promise<void> {
-    const buf = this.intent.getBuffer(bufferId);
-    const bytes = encodeText(buf.text, buf.encoding, buf.eol, {
-      bom: buf.bom,
+    const meta = this.intent.getBuffer(bufferId);
+    // UTF-8 / LF / no BOM: write from the core without materializing in JS.
+    if (
+      meta.encoding === "utf-8" &&
+      meta.eol === "lf" &&
+      meta.bom === false
+    ) {
+      this.intent.savePath(bufferId, path);
+      return;
+    }
+    // Non-UTF-8 / EOL / BOM Path write needs bytes — pull via slice, never a
+    // default full-text snapshot convenience path.
+    const n = this.intent.len(bufferId);
+    const text = n === 0 ? "" : this.intent.slice(bufferId, 0, n);
+    const bytes = encodeText(text, meta.encoding, meta.eol, {
+      bom: meta.bom,
     });
     await writeFile(path, bytes);
   }
@@ -186,7 +227,7 @@ export class EditorShell {
   private markSaved(bufferId: BufferId): void {
     const tab = this.requireTab(bufferId);
     const buf = this.intent.getBuffer(bufferId);
-    tab.savedText = buf.text;
+    tab.savedRev = this.intent.rev(bufferId);
     tab.savedEncoding = buf.encoding;
     tab.savedEol = buf.eol;
     tab.savedBom = buf.bom;
@@ -196,7 +237,7 @@ export class EditorShell {
     const tab = this.requireTab(bufferId);
     const buf = this.intent.getBuffer(bufferId);
     return (
-      buf.text !== tab.savedText ||
+      this.intent.rev(bufferId) !== tab.savedRev ||
       buf.encoding !== tab.savedEncoding ||
       buf.eol !== tab.savedEol ||
       buf.bom !== tab.savedBom
@@ -232,5 +273,22 @@ export class EditorShell {
       dirty,
       active: this.activeId === bufferId,
     };
+  }
+}
+
+/** True when the Path can open via Rust core (UTF-8, no BOM). */
+async function shouldOpenViaCore(path: string): Promise<boolean> {
+  const fh = await fsOpen(path, "r");
+  try {
+    const head = Buffer.alloc(3);
+    const { bytesRead } = await fh.read(head, 0, 3, 0);
+    if (bytesRead >= 3 && head[0] === 0xef && head[1] === 0xbb && head[2] === 0xbf) {
+      return false; // UTF-8 BOM — keep Encoding metadata path
+    }
+    if (bytesRead >= 2 && head[0] === 0xff && head[1] === 0xfe) return false;
+    if (bytesRead >= 2 && head[0] === 0xfe && head[1] === 0xff) return false;
+    return true;
+  } finally {
+    await fh.close();
   }
 }

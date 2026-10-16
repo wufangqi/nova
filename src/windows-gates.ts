@@ -1,22 +1,52 @@
 /**
- * Windows-first capability floors for M2 (ADR-0004 / WUF-79).
+ * Windows-first capability floors (ADR-0004 / WUF-79 / WUF-102).
  * Runnable on any Node host; Windows is the gated release target.
- * Floors cover cold start, hotkey evoke, and large-file Scope sampling.
+ * Floors: cold start, hotkey evoke, large-file Scope sample,
+ * ~100MB open→editable, typing, scroll, native addon load.
  */
+import { createWriteStream, existsSync, mkdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { once } from "node:events";
+import {
+  createUntitled,
+  dropBuffer,
+  resolveNativeAddonPath,
+} from "./buffer-core.js";
 import { EditorShell } from "./editor-shell.js";
 import { IntentService } from "./intent-service.js";
 import { LocalModelGateway } from "./model-gateway.js";
 
-/** Logical size used for the large-file floor (~2 MiB of ASCII). */
+/** Logical size used for the large-file Scope floor (~2 MiB of ASCII). */
 export const LARGE_FILE_CHARS = 2 * 1024 * 1024;
+
+/** ~100 MiB fixture for open→editable / typing / scroll gates. */
+export const FIXTURE_100MB_BYTES = 100 * 1024 * 1024;
 
 /** Soft ceilings — contract floors, not UI frame budgets. */
 export const COLD_START_MAX_MS = 500;
 export const HOTKEY_EVOKE_MAX_MS = 50;
 export const LARGE_FILE_MAX_MS = 3000;
 
+/**
+ * Concrete non-vacuous budgets (WUF-102). Falsifiable on Windows CI:
+ * open must finish before a long hang; typing/scroll must stay interactive.
+ */
+export const OPEN_100MB_EDITABLE_MAX_MS = 30_000;
+export const TYPING_100MB_MAX_MS = 250;
+export const SCROLL_100MB_MAX_MS = 250;
+
+export type GateName =
+  | "cold_start"
+  | "hotkey_evoke"
+  | "large_file"
+  | "open_100mb_editable"
+  | "typing_100mb"
+  | "scroll_100mb"
+  | "native_addon_load";
+
 export interface GateResult {
-  name: "cold_start" | "hotkey_evoke" | "large_file";
+  name: GateName;
   ok: boolean;
   elapsedMs: number;
   detail: string;
@@ -86,7 +116,9 @@ function largeFileGate(): GateResult {
   const text = chunk.slice(0, LARGE_FILE_CHARS);
   shell.editActive(text);
   const buf = shell.getActiveBuffer();
-  assertLarge(buf.text.length >= LARGE_FILE_CHARS - 16);
+  // Measure length via core — do not re-materialize the large body from a snapshot.
+  const chars = intent.len(buf.id);
+  assertLarge(chars >= LARGE_FILE_CHARS - 16);
 
   const parsed = intent.parse({
     bufferId: buf.id,
@@ -102,7 +134,7 @@ function largeFileGate(): GateResult {
     elapsedMs <= LARGE_FILE_MAX_MS &&
     sampled &&
     sampleEnd === 4096 &&
-    sampleEnd < buf.text.length;
+    sampleEnd < chars;
 
   return {
     name: "large_file",
@@ -110,7 +142,7 @@ function largeFileGate(): GateResult {
     elapsedMs,
     detail: ok
       ? `chars=${LARGE_FILE_CHARS}; edit+parse ${elapsedMs.toFixed(1)}ms ≤ ${LARGE_FILE_MAX_MS}ms; scope sampled 0…${sampleEnd}`
-      : `large file floor failed (chars=${buf.text.length}, elapsed=${elapsedMs.toFixed(1)}ms, sampled=${sampled}, end=${sampleEnd})`,
+      : `large file floor failed (chars=${chars}, elapsed=${elapsedMs.toFixed(1)}ms, sampled=${sampled}, end=${sampleEnd})`,
   };
 }
 
@@ -118,12 +150,224 @@ function assertLarge(cond: boolean): void {
   if (!cond) throw new Error("large-file fixture too small");
 }
 
-/** Run Windows M2 floors; safe to invoke from CI on any platform. */
-export function runWindowsGates(): WindowsGatesReport {
+/** Deterministic ~100MB UTF-8 fixture (cached under os.tmpdir). */
+export async function ensure100MbFixture(): Promise<string> {
+  const override = process.env.NOVA_100MB_FIXTURE;
+  if (override && existsSync(override)) {
+    const st = statSync(override);
+    if (st.size >= FIXTURE_100MB_BYTES - 1024) return override;
+  }
+
+  const dir = join(tmpdir(), "nova-wuf102-fixtures");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "fixture-100mb.txt");
+  if (existsSync(path)) {
+    const st = statSync(path);
+    if (st.size >= FIXTURE_100MB_BYTES - 1024) return path;
+  }
+
+  // 64-byte lines → predictable size without a giant in-memory string.
+  const line = "LINE-0123456789abcdef0123456789abcdef0123456789ab\n";
+  const lineBytes = Buffer.byteLength(line, "utf8");
+  const lines = Math.ceil(FIXTURE_100MB_BYTES / lineBytes);
+  const stream = createWriteStream(path);
+  for (let i = 0; i < lines; i++) {
+    if (!stream.write(line)) {
+      await once(stream, "drain");
+    }
+  }
+  stream.end();
+  await once(stream, "finish");
+  return path;
+}
+
+async function run100MbGates(
+  fixturePath: string,
+): Promise<[GateResult, GateResult, GateResult]> {
+  const intent = new IntentService();
+  const shell = new EditorShell(intent);
+
+  const tOpen = performance.now();
+  const opened = await shell.openPath(fixturePath);
+  // Editable = span edit succeeds without materializing the body in JS.
+  shell.editActiveRange(0, 0, "X");
+  const openMs = performance.now() - tOpen;
+  const chars = intent.len(opened.id);
+  const head = intent.slice(opened.id, 0, 1);
+  const openOk =
+    openMs <= OPEN_100MB_EDITABLE_MAX_MS &&
+    chars >= FIXTURE_100MB_BYTES - 1024 &&
+    head === "X";
+  const openGate: GateResult = {
+    name: "open_100mb_editable",
+    ok: openOk,
+    elapsedMs: openMs,
+    detail: openOk
+      ? `open+edit ${openMs.toFixed(1)}ms ≤ ${OPEN_100MB_EDITABLE_MAX_MS}ms; chars=${chars}; head=X`
+      : `100MB open→editable failed (elapsed=${openMs.toFixed(1)}ms, chars=${chars}, head=${JSON.stringify(head)})`,
+  };
+
+  const id = opened.id;
+  const mid = Math.floor(intent.len(id) / 2);
+  const tType = performance.now();
+  shell.editActiveRange(mid, mid, "typed");
+  const typeMs = performance.now() - tType;
+  // Result assertion — timing alone can pass on a no-op; mid must read back "typed".
+  const midSlice = intent.slice(id, mid, mid + "typed".length);
+  const typingGate = evaluateTyping100MbGate(typeMs, midSlice);
+
+  // Scroll nail: plant a mid-line marker, then require the mid window (not top)
+  // to contain it — timing alone / "window non-empty" cannot vacuous-pass.
+  const SCROLL_MARKER = "SCROLL_MARK|";
+  const lines = intent.lineCount(id);
+  const midLine = Math.max(0, Math.floor(lines / 2));
+  const midProbe = intent.lineWindow(id, midLine, 1);
+  shell.editActiveRange(
+    midProbe.startOffset,
+    midProbe.startOffset,
+    SCROLL_MARKER,
+  );
+  const topWin = intent.lineWindow(id, 0, 40);
+  const tScroll = performance.now();
+  const midWin = intent.lineWindow(id, midLine, 40);
+  const scrollMs = performance.now() - tScroll;
+  const scrollGate = evaluateScroll100MbGate({
+    scrollMs,
+    topStartOffset: topWin.startOffset,
+    midStartOffset: midWin.startOffset,
+    topText: topWin.text,
+    midText: midWin.text,
+    marker: SCROLL_MARKER,
+  });
+
+  return [openGate, typingGate, scrollGate];
+}
+
+function nativeAddonLoadGate(): GateResult {
+  const t0 = performance.now();
+  let detail = "";
+  let ok = false;
+  try {
+    const addonPath = resolveNativeAddonPath();
+    const id = createUntitled();
+    dropBuffer(id);
+    // Packaged layout check: sibling of nova-dist must resolve when env points there.
+    ok = existsSync(addonPath);
+    detail = ok
+      ? `addon=${addonPath}`
+      : `addon path missing: ${addonPath}`;
+  } catch (err) {
+    detail = err instanceof Error ? err.message : String(err);
+    ok = false;
+  }
+  const elapsedMs = performance.now() - t0;
+  return {
+    name: "native_addon_load",
+    ok,
+    elapsedMs,
+    detail: ok
+      ? `load+createUntitled ${elapsedMs.toFixed(1)}ms; ${detail}`
+      : `native load failed: ${detail}`,
+  };
+}
+
+/**
+ * Verify installer resource layout can resolve the addon the same way as
+ * `resources/nova-dist/buffer-core.js` → `../native/buffer-core`.
+ */
+export function assertPackagedNativeLayout(resourcesRoot: string): boolean {
+  const fakeModuleDir = join(resourcesRoot, "nova-dist");
+  const addon = resolveNativeAddonPath(fakeModuleDir);
+  return existsSync(addon);
+}
+
+/**
+ * Typing gate verdict: must be within budget **and** mid-buffer must contain
+ * the inserted `"typed"`. Timing-only green on a no-op write is a vacuous pass.
+ */
+export function evaluateTyping100MbGate(
+  typeMs: number,
+  midSlice: string,
+): GateResult {
+  const wrote = midSlice === "typed";
+  const withinBudget = typeMs <= TYPING_100MB_MAX_MS;
+  const ok = wrote && withinBudget;
+  let detail: string;
+  if (ok) {
+    detail = `replaceRange mid ${typeMs.toFixed(1)}ms ≤ ${TYPING_100MB_MAX_MS}ms; mid=${JSON.stringify(midSlice)}`;
+  } else if (!wrote) {
+    detail = `typing did not write mid content (got ${JSON.stringify(midSlice)}, want "typed")`;
+  } else {
+    detail = `typing budget exceeded (${typeMs.toFixed(1)}ms > ${TYPING_100MB_MAX_MS}ms); mid ok`;
+  }
+  return {
+    name: "typing_100mb",
+    ok,
+    elapsedMs: typeMs,
+    detail,
+  };
+}
+
+/**
+ * Scroll gate verdict: mid `lineWindow` must be a different viewport than top
+ * and must contain the planted mid-line marker. Timing + "chars < fixture/100"
+ * alone is vacuous.
+ */
+export function evaluateScroll100MbGate(args: {
+  scrollMs: number;
+  topStartOffset: number;
+  midStartOffset: number;
+  topText: string;
+  midText: string;
+  marker: string;
+}): GateResult {
+  const {
+    scrollMs,
+    topStartOffset,
+    midStartOffset,
+    topText,
+    midText,
+    marker,
+  } = args;
+  const withinBudget = scrollMs <= SCROLL_100MB_MAX_MS;
+  const midHasMarker = midText.includes(marker);
+  const topLacksMarker = !topText.includes(marker);
+  const offsetMoved = midStartOffset > topStartOffset;
+  const ok =
+    withinBudget && midHasMarker && topLacksMarker && offsetMoved;
+
+  let detail: string;
+  if (ok) {
+    detail = `lineWindow mid ${scrollMs.toFixed(1)}ms ≤ ${SCROLL_100MB_MAX_MS}ms; midStart=${midStartOffset}; marker ok`;
+  } else if (!midHasMarker) {
+    detail = `scroll mid window missing marker ${JSON.stringify(marker)} (windowChars=${midText.length})`;
+  } else if (!topLacksMarker) {
+    detail = `scroll top window unexpectedly contains marker — not a mid viewport`;
+  } else if (!offsetMoved) {
+    detail = `scroll mid startOffset ${midStartOffset} not after top ${topStartOffset}`;
+  } else {
+    detail = `scroll budget exceeded (${scrollMs.toFixed(1)}ms > ${SCROLL_100MB_MAX_MS}ms); marker ok`;
+  }
+  return {
+    name: "scroll_100mb",
+    ok,
+    elapsedMs: scrollMs,
+    detail,
+  };
+}
+
+/** Run Windows floors; safe to invoke from CI on any platform. */
+export async function runWindowsGates(): Promise<WindowsGatesReport> {
+  const fixturePath = await ensure100MbFixture();
+  const [openGate, typingGate, scrollGate] = await run100MbGates(fixturePath);
   const gates: GateResult[] = [
     coldStartGate(),
     hotkeyEvokeGate(),
     largeFileGate(),
+    openGate,
+    typingGate,
+    scrollGate,
+    nativeAddonLoadGate(),
   ];
   return {
     ok: gates.every((g) => g.ok),

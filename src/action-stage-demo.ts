@@ -134,14 +134,19 @@ export function runActionStageDemo(
 
     // Re-run on a non-empty Selection after reload (may reuse same Buffer).
     shell.editActive(runText);
-    const textBeforeRun = shell.getActiveBuffer().text;
+    const bufferId = shell.activeBufferId!;
+    const bodyOf = (id: string) => {
+      const n = intent.len(id);
+      return n === 0 ? "" : intent.slice(id, 0, n);
+    };
+    const textBeforeRun = bodyOf(bufferId);
     const selection =
       options.selection ??
       ({ start: 0, end: textBeforeRun.length } satisfies Selection);
 
     const run = reloaded.previewRun({
       actionId: actionIdAfterReload,
-      bufferId: shell.activeBufferId!,
+      bufferId,
       selection,
     });
     steps.push("selection_preview_run");
@@ -152,7 +157,7 @@ export function runActionStageDemo(
       return fail(steps, started, "preview_run must not produce Outbound");
     }
     // Buffer unchanged until Accept.
-    if (shell.getActiveBuffer().text !== textBeforeRun) {
+    if (bodyOf(bufferId) !== textBeforeRun) {
       return fail(steps, started, "preview_run mutated Buffer before Accept");
     }
 
@@ -162,8 +167,8 @@ export function runActionStageDemo(
       return fail(steps, started, `accept failed: ${accepted.reason}`);
     }
 
-    const textAfterAccept = shell.getActiveBuffer().text;
-    const audit = intent.getProvenanceAudit(shell.activeBufferId!);
+    const textAfterAccept = bodyOf(bufferId);
+    const audit = intent.getProvenanceAudit(bufferId);
     const provenanceSource =
       audit[0]?.originalProvenance.source === "action"
         ? ("action" as const)

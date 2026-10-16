@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { IntentService } from "../src/intent-service.js";
 import { LocalModelGateway } from "../src/model-gateway.js";
 import type { ModelGateway, ModelTransformRequest } from "../src/model-gateway.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 describe("transform Intent via local model → Patch preview", () => {
   it("returns Patch preview from a local model for a transform utterance", () => {
@@ -51,11 +52,11 @@ describe("same IntentService Accept/reject", () => {
 
     const accepted = svc.accept(preview.patches);
     assert.equal(accepted.ok, true);
-    assert.equal(svc.getBuffer(buf.id).text, "HELLO world");
+    assert.equal(bufferBody(svc, buf.id), "HELLO world");
 
     if (accepted.ok) {
       svc.undo(accepted.undoGroupId);
-      assert.equal(svc.getBuffer(buf.id).text, "hello world");
+      assert.equal(bufferBody(svc, buf.id), "hello world");
     }
 
     const intent2 = svc.parse({
@@ -67,7 +68,7 @@ describe("same IntentService Accept/reject", () => {
     assert.equal(preview2.kind, "patches");
     if (preview2.kind !== "patches") return;
     svc.reject(preview2.previewId);
-    assert.equal(svc.getBuffer(buf.id).text, "hello world");
+    assert.equal(bufferBody(svc, buf.id), "hello world");
     assert.equal(svc.getBuffer(buf.id).revision, buf.revision);
   });
 });
@@ -104,7 +105,7 @@ describe("deterministic validator", () => {
     // No Acceptable Patch was produced — caller cannot Accept this preview.
     // Manual edit exit: Buffer editing still works.
     const edited = svc.editBuffer(buf.id, "I edited this myself");
-    assert.equal(edited.text, "I edited this myself");
+    assert.equal(bufferBody(svc, edited.id), "I edited this myself");
   });
 
   it("rejects out-of-scope edits from the model", () => {
@@ -141,7 +142,7 @@ describe("deterministic validator", () => {
     if (preview.kind !== "error") return;
     assert.equal(preview.reason, "validation_failed");
     assert.equal(preview.manualEditOk, true);
-    assert.equal(svc.getBuffer(buf.id).text, "abcdefghij");
+    assert.equal(bufferBody(svc, buf.id), "abcdefghij");
   });
 });
 
@@ -170,6 +171,6 @@ describe("offline local model (eval machine)", () => {
 
     const result = svc.accept(preview.patches);
     assert.equal(result.ok, true);
-    assert.equal(svc.getBuffer(buf.id).text, "DEMO text");
+    assert.equal(bufferBody(svc, buf.id), "DEMO text");
   });
 });

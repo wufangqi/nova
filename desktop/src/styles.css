@@ -17,7 +17,7 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto 1fr auto auto auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto auto auto;
   min-height: 100vh;
 }
 
@@ -91,22 +91,90 @@ button.tab.active {
   min-height: 2.2rem;
 }
 
-.editor {
+.editor-chrome {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  background: #e8e4db;
+  border-bottom: 1px solid #bdb7aa;
+}
+
+.goto-field {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-weight: 600;
+}
+
+.goto-field input {
+  width: 5.5rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid #a9a296;
+  border-radius: 3px;
+  background: #fff;
+  font: inherit;
+}
+
+.editor-viewport {
+  position: relative;
   width: 100%;
-  height: 100%;
+  min-height: 16rem;
+  overflow: auto;
+  background: #fff;
+  border: 0;
+}
+
+.editor-spacer {
+  width: 1px;
+  pointer-events: none;
+}
+
+.editor-window {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+
+.editor {
+  display: block;
+  width: 100%;
   min-height: 16rem;
   margin: 0;
   padding: 0.85rem 1rem;
   border: 0;
   resize: none;
+  overflow: hidden;
   background: #fff;
-  font: 15px/1.45 "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+  font: 15px/22px "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
   color: inherit;
+  white-space: pre;
+  tab-size: 4;
 }
 
 .editor:disabled {
   background: #f3f1ec;
   color: #777;
+}
+
+.find-hit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 0.15rem 0;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #bdb7aa;
+  border-radius: 3px;
+  background: #f7f5f0;
+  color: #1c1c1c;
+  font: inherit;
+  cursor: pointer;
+}
+
+.find-hit:hover {
+  background: #fff;
 }
 
 .find-panel {

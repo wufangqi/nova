@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { FindBar } from "../src/find-bar.js";
 import { IntentService } from "../src/intent-service.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 describe("parse / preview / accept / reject (deterministic stub)", () => {
   it("end-to-end: utterance → Patch preview → Accept writes Buffer", () => {
@@ -26,17 +27,17 @@ describe("parse / preview / accept / reject (deterministic stub)", () => {
     assert.ok(preview.cost);
     assert.ok(preview.patches.length >= 1);
 
-    const before = svc.getBuffer(buf.id).text;
+    const before = bufferBody(svc, buf.id);
     const result = svc.accept(preview.patches);
     assert.equal(result.ok, true);
-    assert.equal(svc.getBuffer(buf.id).text, "HELLO world");
-    assert.notEqual(svc.getBuffer(buf.id).text, before);
+    assert.equal(bufferBody(svc, buf.id), "HELLO world");
+    assert.notEqual(bufferBody(svc, buf.id), before);
 
     if (result.ok) {
       const audit = svc.getProvenanceAudit(buf.id);
       assert.ok(audit.some((e) => e.originalProvenance.source === "ai"));
       svc.undo(result.undoGroupId);
-      assert.equal(svc.getBuffer(buf.id).text, "hello world");
+      assert.equal(bufferBody(svc, buf.id), "hello world");
     }
   });
 
@@ -53,7 +54,7 @@ describe("parse / preview / accept / reject (deterministic stub)", () => {
     if (preview.kind !== "patches") return;
 
     svc.reject(preview.previewId);
-    assert.equal(svc.getBuffer(buf.id).text, "keep me");
+    assert.equal(bufferBody(svc, buf.id), "keep me");
     assert.equal(svc.getBuffer(buf.id).revision, buf.revision);
   });
 });
@@ -102,7 +103,7 @@ describe("Scope resolution", () => {
     const result = svc.accept(preview.patches);
     assert.equal(result.ok, true);
     // Only the sampled window is uppercased; rest of Buffer unchanged.
-    assert.equal(svc.getBuffer(buf.id).text, "ABCDEFGHijklmnopqrstuvwxyz");
+    assert.equal(bufferBody(svc, buf.id), "ABCDEFGHijklmnopqrstuvwxyz");
   });
 
   it("uses Selection when provided", () => {
@@ -124,7 +125,7 @@ describe("Scope resolution", () => {
     assert.equal(preview.kind, "patches");
     if (preview.kind !== "patches") return;
     assert.equal(svc.accept(preview.patches).ok, true);
-    assert.equal(svc.getBuffer(buf.id).text, "one TWO three");
+    assert.equal(bufferBody(svc, buf.id), "one TWO three");
   });
 
   it("uses provided visible window when no Selection", () => {
@@ -145,7 +146,7 @@ describe("Scope resolution", () => {
     assert.equal(preview.kind, "patches");
     if (preview.kind !== "patches") return;
     assert.equal(svc.accept(preview.patches).ok, true);
-    assert.equal(svc.getBuffer(buf.id).text, "abCDEfghij");
+    assert.equal(bufferBody(svc, buf.id), "abCDEfghij");
   });
 });
 
@@ -167,7 +168,7 @@ describe("no local model (ADR-0003)", () => {
 
     // Editor path still works.
     const edited = svc.editBuffer(buf.id, "alpha beta alpha!");
-    assert.equal(edited.text, "alpha beta alpha!");
+    assert.equal(bufferBody(svc, edited.id), "alpha beta alpha!");
 
     // FindBar (non-AI) still works.
     const bar = new FindBar(svc);

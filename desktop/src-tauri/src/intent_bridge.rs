@@ -196,15 +196,66 @@ pub fn create_buffer(bridge: &SharedBridge, text: Option<String>) -> Result<Valu
     unwrap_ipc(response)
 }
 
-pub fn get_buffer(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+pub fn get_buffer(
+    bridge: &SharedBridge,
+    id: String,
+    include_text: Option<bool>,
+) -> Result<Value, String> {
     let mut guard = bridge
         .lock()
         .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
+    let mut params = json!({ "id": id });
+    if let Some(include) = include_text {
+        params["includeText"] = json!(include);
+    }
     let response = guard.call(json!({
         "method": "get_buffer",
-        "params": { "id": id }
+        "params": params
     }))?;
     unwrap_ipc(response)
+}
+
+/// WUF-98 — thin forwards for core-equivalent slice / line window / len / rev.
+pub fn slice(
+    bridge: &SharedBridge,
+    id: String,
+    start: u64,
+    end: u64,
+) -> Result<Value, String> {
+    call_params(
+        bridge,
+        "slice",
+        json!({ "id": id, "start": start, "end": end }),
+    )
+}
+
+pub fn line_window(
+    bridge: &SharedBridge,
+    id: String,
+    line_start: u64,
+    line_count: u64,
+) -> Result<Value, String> {
+    call_params(
+        bridge,
+        "line_window",
+        json!({
+            "id": id,
+            "lineStart": line_start,
+            "lineCount": line_count
+        }),
+    )
+}
+
+pub fn buffer_len(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    call_params(bridge, "buffer_len", json!({ "id": id }))
+}
+
+pub fn buffer_rev(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    call_params(bridge, "buffer_rev", json!({ "id": id }))
+}
+
+pub fn buffer_line_count(bridge: &SharedBridge, id: String) -> Result<Value, String> {
+    call_params(bridge, "buffer_line_count", json!({ "id": id }))
 }
 
 pub fn accept(bridge: &SharedBridge, patches: Value) -> Result<Value, String> {
@@ -237,15 +288,25 @@ pub fn activate_tab(bridge: &SharedBridge, id: String) -> Result<Value, String> 
     unwrap_ipc(response)
 }
 
-pub fn edit_active(bridge: &SharedBridge, text: String) -> Result<Value, String> {
-    let mut guard = bridge
-        .lock()
-        .map_err(|_| "Intent IPC bridge lock poisoned".to_string())?;
-    let response = guard.call(json!({
-        "method": "edit_active",
-        "params": { "text": text }
-    }))?;
-    unwrap_ipc(response)
+/// Full-text or span edit. Prefer start/end/replacement for virtual scroll.
+pub fn edit_active(
+    bridge: &SharedBridge,
+    text: Option<String>,
+    start: Option<u64>,
+    end: Option<u64>,
+    replacement: Option<String>,
+) -> Result<Value, String> {
+    let mut params = serde_json::Map::new();
+    if let (Some(s), Some(e), Some(r)) = (start, end, replacement) {
+        params.insert("start".into(), json!(s));
+        params.insert("end".into(), json!(e));
+        params.insert("replacement".into(), json!(r));
+    } else if let Some(t) = text {
+        params.insert("text".into(), json!(t));
+    } else {
+        return Err("edit_active requires text or start/end/replacement".into());
+    }
+    call_params(bridge, "edit_active", Value::Object(params))
 }
 
 pub fn open_path(bridge: &SharedBridge, path: String) -> Result<Value, String> {

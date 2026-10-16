@@ -48,7 +48,14 @@ describe("Path open and save", () => {
 
     const shell = new EditorShell();
     const opened = await shell.openPath(path);
-    assert.equal(opened.text, "hello from disk");
+    // Snapshots omit full text; body via slice/len.
+    assert.equal(opened.text, undefined);
+    assert.equal(shell.getActiveBuffer().text, undefined);
+    const intent = shell.intentService();
+    assert.equal(
+      intent.slice(opened.id, 0, intent.len(opened.id)),
+      "hello from disk",
+    );
     assert.equal(shell.getTab(opened.id).path, path);
     assert.equal(shell.getTab(opened.id).untitled, false);
     assert.equal(shell.getTab(opened.id).dirty, false);

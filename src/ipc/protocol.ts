@@ -1,7 +1,12 @@
 /**
- * WUF-81/82/84/85/86/92 — Tauri IPC request/response shapes.
+ * WUF-81/82/84/85/86/92/98/99/101 — Tauri IPC request/response shapes.
  * Thin facade over IntentService + EditorShell + FindBar + ActionService;
- * no alternate Accept path.
+ * no alternate Accept path. WUF-98/99/101: slice / line_window / len / rev /
+ * line_count; BufferSnapshot.text omitted by default on get_buffer /
+ * create_buffer / accept, Intent / FindBar / Action / Undo / Explanation /
+ * Suggestion, and shell methods. Opt in via includeText: true on
+ * get_buffer / create_buffer. edit_active accepts full text (legacy) or
+ * span { start, end, replacement }.
  */
 import type {
   AcceptResult,
@@ -23,6 +28,7 @@ import type {
   UndoGroupId,
   VisibleWindow,
 } from "../types.js";
+import type { LineWindow } from "../buffer-core.js";
 import type { CloseResult, TabInfo } from "../editor-shell.js";
 import type {
   FindHit,
@@ -35,6 +41,11 @@ import type { Suggestion } from "../suggestions.js";
 export type IpcMethod =
   | "create_buffer"
   | "get_buffer"
+  | "slice"
+  | "line_window"
+  | "buffer_len"
+  | "buffer_rev"
+  | "buffer_line_count"
   | "accept"
   | "evoke"
   | "list_tabs"
@@ -68,11 +79,44 @@ export type IpcMethod =
 
 export type CreateBufferRequest = {
   method: "create_buffer";
-  params: { text?: string } & BufferCreateOptions;
+  params: {
+    text?: string;
+    /** When true, snapshot includes full text (default: omit). */
+    includeText?: boolean;
+  } & BufferCreateOptions;
 };
 
 export type GetBufferRequest = {
   method: "get_buffer";
+  params: {
+    id: string;
+    /** When true, snapshot includes full text (default: omit). */
+    includeText?: boolean;
+  };
+};
+
+export type SliceRequest = {
+  method: "slice";
+  params: { id: string; start: number; end: number };
+};
+
+export type LineWindowRequest = {
+  method: "line_window";
+  params: { id: string; lineStart: number; lineCount: number };
+};
+
+export type BufferLenRequest = {
+  method: "buffer_len";
+  params: { id: string };
+};
+
+export type BufferRevRequest = {
+  method: "buffer_rev";
+  params: { id: string };
+};
+
+export type BufferLineCountRequest = {
+  method: "buffer_line_count";
   params: { id: string };
 };
 
@@ -98,7 +142,14 @@ export type ActivateTabRequest = {
 
 export type EditActiveRequest = {
   method: "edit_active";
-  params: { text: string };
+  params:
+    | { text: string; start?: never; end?: never; replacement?: never }
+    | {
+        start: number;
+        end: number;
+        replacement: string;
+        text?: never;
+      };
 };
 
 export type OpenPathRequest = {
@@ -263,6 +314,11 @@ export type PreviewRunRequest = {
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
+  | SliceRequest
+  | LineWindowRequest
+  | BufferLenRequest
+  | BufferRevRequest
+  | BufferLineCountRequest
   | AcceptRequest
   | EvokeRequest
   | ListTabsRequest
@@ -300,6 +356,11 @@ export type IpcResponse<T> = IpcOk<T> | IpcErr;
 
 export type CreateBufferResult = BufferSnapshot;
 export type GetBufferResult = BufferSnapshot;
+export type SliceResult = { text: string };
+export type LineWindowResult = LineWindow;
+export type BufferLenResult = { len: number };
+export type BufferRevResult = { rev: number };
+export type BufferLineCountResult = { lineCount: number };
 export type AcceptIpcResult = {
   accept: AcceptResult;
   /** Buffer snapshots after Accept attempt (same ids as patches). */

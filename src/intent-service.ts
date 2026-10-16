@@ -1,5 +1,22 @@
 import { randomUUID } from "node:crypto";
 import {
+  applyAccept as coreApplyAccept,
+  bumpRev,
+  createBuffer as coreCreateBuffer,
+  dropBuffer,
+  len as coreLen,
+  lineCount as coreLineCount,
+  lineWindow as coreLineWindow,
+  openPath as coreOpenPath,
+  replaceRange as coreReplaceRange,
+  rev as coreRev,
+  save as coreSave,
+  setText as coreSetText,
+  slice as coreSlice,
+  undo as coreUndo,
+  type LineWindow,
+} from "./buffer-core.js";
+import {
   buildExplanation,
   isExplainUtterance,
   resolveAnchor,
@@ -19,6 +36,8 @@ import type {
   BufferCreateOptions,
   BufferId,
   BufferSnapshot,
+  BufferSnapshotOptions,
+  BufferTextFingerprint,
   Cost,
   Eol,
   ExplanationAnchor,
@@ -34,20 +53,20 @@ import type {
   ProvenanceAuditEntry,
   RegexDraft,
   ResolvedScope,
-  TextEdit,
   UndoGroupId,
 } from "./types.js";
 
 const DEFAULT_VISIBLE_SAMPLE_CHARS = 4096;
+/** Bounded head/tail samples for Accept Provenance — never whole Buffer. */
+const FINGERPRINT_SAMPLE_CHARS = 64;
 const MODEL_UNAVAILABLE_GUIDANCE =
   "No local model is installed. Install a local model to run AI Intents, or enable a cloud path. Buffer editing and FindBar still work offline.";
 const VALIDATION_FAILED_GUIDANCE =
   "Model output failed validation and cannot be Accepted. Edit the Buffer manually, or re-run the Intent.";
 
+/** Metadata only — logical text / revision live in the Rust Buffer core. */
 interface BufferState {
   id: BufferId;
-  text: string;
-  revision: number;
   encoding: string;
   eol: Eol;
   bom: boolean;
@@ -56,9 +75,7 @@ interface BufferState {
 interface UndoGroupRecord {
   id: UndoGroupId;
   bufferId: BufferId;
-  textBefore: string;
   revisionBefore: number;
-  textAfter: string;
   revisionAfter: number;
   encodingBefore: string;
   eolBefore: Eol;
@@ -68,92 +85,46 @@ interface UndoGroupRecord {
   bomAfter: boolean;
 }
 
-interface RelocatedEdit {
-  start: number;
-  end: number;
-  replacement: string;
+function bufferText(id: BufferId): string {
+  const n = coreLen(id);
+  return n === 0 ? "" : coreSlice(id, 0, n);
 }
 
-function snapshot(b: BufferState): BufferSnapshot {
+/** Offset/length/sample fingerprint — no whole-Buffer copy into TS heap. */
+function textFingerprint(id: BufferId): BufferTextFingerprint {
+  const n = coreLen(id);
+  const headLen = Math.min(FINGERPRINT_SAMPLE_CHARS, n);
+  const tailLen = Math.min(FINGERPRINT_SAMPLE_CHARS, n);
+  const head = headLen === 0 ? "" : coreSlice(id, 0, headLen);
+  const tailStart = Math.max(0, n - tailLen);
+  const tail = tailLen === 0 ? "" : coreSlice(id, tailStart, n);
   return {
-    id: b.id,
-    text: b.text,
-    revision: b.revision,
-    encoding: b.encoding,
-    eol: b.eol,
-    bom: b.bom,
+    len: n,
+    revision: coreRev(id),
+    head,
+    tail,
   };
 }
 
 /**
- * Relocate a single edit onto current text.
- * Same revision → offsets apply as-is (validated against length).
- * Drifted revision → require exact before/after context match for the old span.
+ * Meta snapshot. Full `text` only when `includeText` — never the silent default
+ * (pulling whole Buffer into JS is an explicit opt-in; prefer slice/lineWindow).
  */
-function relocateEdit(
-  text: string,
-  edit: TextEdit,
-  baseRevision: number,
-  currentRevision: number,
-): RelocatedEdit | null {
-  if (edit.start < 0 || edit.end < edit.start) return null;
-
-  if (baseRevision === currentRevision) {
-    if (edit.end > text.length) return null;
-    return { start: edit.start, end: edit.end, replacement: edit.replacement };
-  }
-
-  const before = edit.before ?? "";
-  const after = edit.after ?? "";
-  const expectedLen = edit.end - edit.start;
-
-  if (before.length === 0 && after.length === 0) {
-    return null;
-  }
-
-  const candidates: number[] = [];
-  if (before.length === 0) {
-    let from = 0;
-    while (from <= text.length) {
-      const idx = text.indexOf(after, from);
-      if (idx < 0) break;
-      const end = idx;
-      const start = end - expectedLen;
-      if (start >= 0) candidates.push(start);
-      from = idx + 1;
-    }
-  } else {
-    let from = 0;
-    while (from <= text.length) {
-      const idx = text.indexOf(before, from);
-      if (idx < 0) break;
-      const start = idx + before.length;
-      const end = start + expectedLen;
-      if (end <= text.length) {
-        const trail = text.slice(end, end + after.length);
-        if (trail === after) candidates.push(start);
-      }
-      from = idx + 1;
-    }
-  }
-
-  if (candidates.length !== 1) return null;
-  const start = candidates[0]!;
-  return {
-    start,
-    end: start + expectedLen,
-    replacement: edit.replacement,
+function snapshot(
+  b: BufferState,
+  options: BufferSnapshotOptions = {},
+): BufferSnapshot {
+  const snap: BufferSnapshot = {
+    id: b.id,
+    revision: coreRev(b.id),
+    encoding: b.encoding,
+    eol: b.eol,
+    bom: b.bom,
   };
-}
-
-/** Apply edits right-to-left so earlier offsets stay valid. */
-function applyEdits(text: string, edits: RelocatedEdit[]): string {
-  const ordered = [...edits].sort((a, b) => b.start - a.start);
-  let out = text;
-  for (const e of ordered) {
-    out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
+  if (options.includeText === true) {
+    snap.text = bufferText(b.id);
   }
-  return out;
+  return snap;
 }
 
 function clampRange(
@@ -166,13 +137,13 @@ function clampRange(
 }
 
 function resolveScope(
-  text: string,
+  textLen: number,
   input: ParseInput,
   sampleChars: number,
 ): { scope: ResolvedScope; scopeLabel: string } {
   const sel = input.selection;
   if (sel) {
-    const r = clampRange(sel.start, sel.end, text.length);
+    const r = clampRange(sel.start, sel.end, textLen);
     if (!r) throw new Error("invalid Selection");
     return {
       scope: { kind: "selection", start: r.start, end: r.end },
@@ -182,7 +153,7 @@ function resolveScope(
 
   const win = input.visibleWindow;
   if (win) {
-    const r = clampRange(win.start, win.end, text.length);
+    const r = clampRange(win.start, win.end, textLen);
     if (!r) throw new Error("invalid visible window");
     return {
       scope: {
@@ -196,15 +167,16 @@ function resolveScope(
   }
 
   // Default: visible sample — never silently the whole Buffer for large text.
-  const end = Math.min(text.length, Math.max(0, sampleChars));
+  const end = Math.min(textLen, Math.max(0, sampleChars));
   return {
     scope: { kind: "visible", start: 0, end, sampled: true },
     scopeLabel: `Visible sample 0…${end}`,
   };
 }
 
-function scopeSlice(text: string, scope: ResolvedScope): string {
-  return text.slice(scope.start, scope.end);
+function scopeSlice(bufferId: BufferId, scope: ResolvedScope): string {
+  if (scope.start === scope.end) return "";
+  return coreSlice(bufferId, scope.start, scope.end);
 }
 
 /**
@@ -216,6 +188,7 @@ function scopeSlice(text: string, scope: ResolvedScope): string {
  * WUF-76: Explanation previews + safe anchor resolve (no Buffer mutation).
  * WUF-77: NL → RegexDraft (FindBar fill only; replace is an explicit later step).
  * WUF-89: outstanding preview records for Action save eligibility.
+ * WUF-97: Accept / reject / Undo delegate text+revision to Rust Buffer core.
  */
 export class IntentService {
   private buffers = new Map<BufferId, BufferState>();
@@ -247,12 +220,14 @@ export class IntentService {
     return this.cloudEnabled;
   }
 
-  createBuffer(text = "", options: BufferCreateOptions = {}): BufferSnapshot {
-    const id = randomUUID();
+  createBuffer(
+    text = "",
+    options: BufferCreateOptions = {},
+    snapshotOptions: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
+    const id = coreCreateBuffer(text);
     const state: BufferState = {
       id,
-      text,
-      revision: 0,
       encoding: options.encoding ?? "utf-8",
       eol: options.eol ?? "lf",
       bom: options.bom ?? false,
@@ -260,21 +235,102 @@ export class IntentService {
     this.buffers.set(id, state);
     this.mainHistory.set(id, []);
     this.audit.set(id, []);
-    return snapshot(state);
+    return snapshot(state, snapshotOptions);
   }
 
-  getBuffer(id: BufferId): BufferSnapshot {
+  /**
+   * Open a UTF-8 Path into the Rust core without pulling the body into JS.
+   * Non-UTF-8 Paths must use EditorShell's decode fallback.
+   */
+  openPath(
+    path: string,
+    options: BufferCreateOptions = {},
+    snapshotOptions: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
+    const id = coreOpenPath(path);
+    const state: BufferState = {
+      id,
+      encoding: options.encoding ?? "utf-8",
+      eol: options.eol ?? "lf",
+      bom: options.bom ?? false,
+    };
+    this.buffers.set(id, state);
+    this.mainHistory.set(id, []);
+    this.audit.set(id, []);
+    return snapshot(state, snapshotOptions);
+  }
+
+  /** Persist Buffer via the core (UTF-8 bytes as stored in the rope). */
+  savePath(id: BufferId, path?: string): void {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    coreSave(id, path ?? null);
+  }
+
+  getBuffer(
+    id: BufferId,
+    options: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
-    return snapshot(b);
+    return snapshot(b, options);
+  }
+
+  /** Core-equivalent slice — does not require holding full Buffer text in JS. */
+  slice(id: BufferId, start: number, end: number): string {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreSlice(id, start, end);
+  }
+
+  /** Core-equivalent line window. */
+  lineWindow(
+    id: BufferId,
+    lineStart: number,
+    lineCount: number,
+  ): LineWindow {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreLineWindow(id, lineStart, lineCount);
+  }
+
+  len(id: BufferId): number {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreLen(id);
+  }
+
+  lineCount(id: BufferId): number {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreLineCount(id);
+  }
+
+  rev(id: BufferId): number {
+    if (!this.buffers.has(id)) throw new Error(`unknown Buffer: ${id}`);
+    return coreRev(id);
   }
 
   /** Direct human edit of logical text (not a Patch Accept). */
-  editBuffer(id: BufferId, text: string): BufferSnapshot {
+  editBuffer(
+    id: BufferId,
+    text: string,
+    options: BufferSnapshotOptions = {},
+  ): BufferSnapshot {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
-    b.text = text;
-    b.revision += 1;
+    coreSetText(id, text);
+    return snapshot(b, options);
+  }
+
+  /**
+   * Span human edit — replace `[start, end)` without requiring full text in JS.
+   * Not a Patch Accept (typing / paste path).
+   */
+  editBufferRange(
+    id: BufferId,
+    start: number,
+    end: number,
+    replacement: string,
+  ): BufferSnapshot {
+    const b = this.buffers.get(id);
+    if (!b) throw new Error(`unknown Buffer: ${id}`);
+    coreReplaceRange(id, start, end, replacement);
     return snapshot(b);
   }
 
@@ -285,14 +341,15 @@ export class IntentService {
   setBufferMeta(
     id: BufferId,
     meta: { encoding?: string; eol?: Eol; bom?: boolean },
+    options: BufferSnapshotOptions = {},
   ): BufferSnapshot {
     const b = this.buffers.get(id);
     if (!b) throw new Error(`unknown Buffer: ${id}`);
     if (meta.encoding !== undefined) b.encoding = meta.encoding;
     if (meta.eol !== undefined) b.eol = meta.eol;
     if (meta.bom !== undefined) b.bom = meta.bom;
-    b.revision += 1;
-    return snapshot(b);
+    bumpRev(id);
+    return snapshot(b, options);
   }
 
   /**
@@ -302,8 +359,9 @@ export class IntentService {
   parse(input: ParseInput): Intent {
     const buf = this.buffers.get(input.bufferId);
     if (!buf) throw new Error(`unknown Buffer: ${input.bufferId}`);
+    const textLen = coreLen(buf.id);
     const { scope, scopeLabel } = resolveScope(
-      buf.text,
+      textLen,
       input,
       this.visibleSampleChars,
     );
@@ -321,6 +379,7 @@ export class IntentService {
    * Cost always present on success; Outbound when cloudEnabled.
    * Missing local model ⇒ structured error with install guidance (ADR-0003).
    * Invalid model output ⇒ validation_failed (manual edit exit; never Acceptable).
+   * Model context is Scope-only — never the whole Buffer without Selection.
    */
   preview(intent: Intent): PreviewResult {
     const buf = this.buffers.get(intent.bufferId);
@@ -334,7 +393,9 @@ export class IntentService {
       };
     }
 
-    const scoped = scopeSlice(buf.text, intent.scope);
+    const scoped = scopeSlice(buf.id, intent.scope);
+    const textLen = coreLen(buf.id);
+    const revision = coreRev(buf.id);
     const previewId = randomUUID();
 
     // Cloud path: noticeability even when a local gateway is injected for tests.
@@ -363,7 +424,11 @@ export class IntentService {
       return {
         kind: "explanation",
         previewId,
-        explanation: buildExplanation(buf.text, intent.scope, buf.revision),
+        explanation: buildExplanation(
+          bufferText(buf.id),
+          intent.scope,
+          revision,
+        ),
         cost: {
           ...cost,
           // Explanations are lighter than transforms.
@@ -398,18 +463,19 @@ export class IntentService {
     }
 
     // Transform path: real/local model → validate → Patch preview.
+    // Pass Scope text only — do not ship whole-Buffer as model context.
     const modelOut = this.modelGateway.transform({
       utterance: intent.utterance,
       scopeText: scoped,
       scope: intent.scope,
-      bufferText: buf.text,
-      bufferRevision: buf.revision,
+      bufferText: scoped,
+      bufferRevision: revision,
     });
 
     const validated = validateModelPatchOutput(
       modelOut.raw,
       intent.scope,
-      buf.text.length,
+      textLen,
     );
     if (!validated.ok) {
       return {
@@ -422,18 +488,19 @@ export class IntentService {
 
     const patch: Patch = {
       bufferId: buf.id,
-      baseRevision: buf.revision,
+      baseRevision: revision,
       edits: validated.edits.map((e) => ({
         start: e.start,
         end: e.end,
         replacement: e.replacement,
         before:
           e.start > 0
-            ? buf.text.slice(Math.max(0, e.start - 8), e.start)
+            ? coreSlice(buf.id, Math.max(0, e.start - 8), e.start)
             : "",
-        after: buf.text.slice(
+        after: coreSlice(
+          buf.id,
           e.end,
-          Math.min(buf.text.length, e.end + 8),
+          Math.min(textLen, e.end + 8),
         ),
       })),
       provenance: {
@@ -496,7 +563,7 @@ export class IntentService {
     if (!buf) {
       return { ok: false, status: "invalid", reason: "unknown" };
     }
-    return resolveAnchor(buf.text, buf.revision, anchor);
+    return resolveAnchor(bufferText(buf.id), coreRev(buf.id), anchor);
   }
 
   accept(patches: Patch[]): AcceptResult {
@@ -509,28 +576,6 @@ export class IntentService {
 
     const buf = this.buffers.get(bufferId);
     if (!buf) return { ok: false, reason: "invalid" };
-
-    const relocated: RelocatedEdit[] = [];
-    for (const patch of patches) {
-      if (!patch.edits.length) return { ok: false, reason: "invalid" };
-      for (const edit of patch.edits) {
-        const r = relocateEdit(
-          buf.text,
-          edit,
-          patch.baseRevision,
-          buf.revision,
-        );
-        if (!r) return { ok: false, reason: "reloc_failed" };
-        relocated.push(r);
-      }
-    }
-
-    const sorted = [...relocated].sort((a, b) => a.start - b.start);
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i]!.start < sorted[i - 1]!.end) {
-        return { ok: false, reason: "invalid" };
-      }
-    }
 
     // Merge explicit metadata from the batch (later Patch wins per field).
     let nextEncoding = buf.encoding;
@@ -552,27 +597,41 @@ export class IntentService {
       nextBom = buf.bom;
     }
 
-    const textBefore = buf.text;
-    const revisionBefore = buf.revision;
+    const before = textFingerprint(bufferId);
+    const revisionBefore = before.revision;
     const encodingBefore = buf.encoding;
     const eolBefore = buf.eol;
     const bomBefore = buf.bom;
-    const textAfter = applyEdits(buf.text, relocated);
 
-    buf.text = textAfter;
+    const applied = coreApplyAccept(
+      bufferId,
+      patches.map((p) => ({
+        baseRevision: p.baseRevision,
+        edits: p.edits.map((e) => ({
+          start: e.start,
+          end: e.end,
+          replacement: e.replacement,
+          before: e.before,
+          after: e.after,
+        })),
+      })),
+    );
+
+    if (!applied.ok) {
+      return { ok: false, reason: applied.reason };
+    }
+
     buf.encoding = nextEncoding;
     buf.eol = nextEol;
     buf.bom = nextBom;
-    buf.revision += 1;
 
-    const undoGroupId = randomUUID();
+    const after = textFingerprint(bufferId);
+    const undoGroupId = applied.undoGroupId;
     this.undoGroups.set(undoGroupId, {
       id: undoGroupId,
       bufferId,
-      textBefore,
       revisionBefore,
-      textAfter,
-      revisionAfter: buf.revision,
+      revisionAfter: applied.rev,
       encodingBefore,
       eolBefore,
       bomBefore,
@@ -584,8 +643,8 @@ export class IntentService {
     const mainEntry: MainHistoryEntry = {
       undoGroupId,
       committedBy: "user",
-      bufferRevisionAfter: buf.revision,
-      textAfter,
+      bufferRevisionAfter: applied.rev,
+      after,
     };
     this.mainHistory.get(bufferId)!.push(mainEntry);
 
@@ -596,8 +655,8 @@ export class IntentService {
         originalProvenance: patch.provenance,
         intentId: patch.intentId,
         bufferId,
-        textBefore,
-        textAfter,
+        before,
+        after,
       });
     }
 
@@ -611,8 +670,7 @@ export class IntentService {
     if (!buf) throw new Error(`unknown Buffer: ${group.bufferId}`);
 
     if (
-      buf.text !== group.textAfter ||
-      buf.revision !== group.revisionAfter ||
+      coreRev(group.bufferId) !== group.revisionAfter ||
       buf.encoding !== group.encodingAfter ||
       buf.eol !== group.eolAfter ||
       buf.bom !== group.bomAfter
@@ -620,8 +678,7 @@ export class IntentService {
       throw new Error("UndoGroup is not at Buffer tip");
     }
 
-    buf.text = group.textBefore;
-    buf.revision = group.revisionBefore;
+    coreUndo(group.bufferId, undoGroupId);
     buf.encoding = group.encodingBefore;
     buf.eol = group.eolBefore;
     buf.bom = group.bomBefore;
@@ -642,5 +699,17 @@ export class IntentService {
     const a = this.audit.get(bufferId);
     if (!a) throw new Error(`unknown Buffer: ${bufferId}`);
     return [...a];
+  }
+
+  /** Test / lifecycle helper — drop core store entry when Buffer is discarded. */
+  disposeBuffer(id: BufferId): void {
+    if (!this.buffers.delete(id)) return;
+    this.mainHistory.delete(id);
+    this.audit.delete(id);
+    try {
+      dropBuffer(id);
+    } catch {
+      /* already dropped */
+    }
   }
 }

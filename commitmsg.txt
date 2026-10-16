@@ -1,0 +1,4 @@
+merge(wuf-101): resolve integrate tip with WUF-99 full-text omit
+
+Keep virtual-scroll span edit and shell snapshot omit; adopt WUF-99
+Intent/Find/Action omit helpers.

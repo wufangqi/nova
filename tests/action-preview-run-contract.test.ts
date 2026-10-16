@@ -12,6 +12,7 @@ import {
 } from "../src/action-service.js";
 import { IntentService } from "../src/intent-service.js";
 import type { RegexDraft, SavedAction } from "../src/types.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 function seedAction(
   store: MemoryActionStore,
@@ -62,7 +63,7 @@ describe("preview_run on non-empty Selection → Patch (no Outbound)", () => {
     assert.equal(run.cost.hasOutbound, false);
     assert.equal(run.outbound, undefined);
     // Buffer unchanged until Accept.
-    assert.equal(intent.getBuffer(buf.id).text, "red fox red hen");
+    assert.equal(bufferBody(intent, buf.id), "red fox red hen");
 
     // Deterministic — must not call Intent parse/preview (no model).
     intent.parse = () => {
@@ -102,7 +103,7 @@ describe("empty Selection fails clearly", () => {
     if (run.ok) return;
     assert.equal(run.reason, "empty_selection");
     assert.match(run.guidance, /selection|选区|空/i);
-    assert.equal(intent.getBuffer(buf.id).text, "red fox red hen");
+    assert.equal(bufferBody(intent, buf.id), "red fox red hen");
     assert.equal(intent.getMainHistory(buf.id).length, 0);
   });
 });
@@ -122,7 +123,7 @@ describe("zero matches and find-only (no replacement)", () => {
     const run = actions.previewRun({
       actionId: saved.id,
       bufferId: buf.id,
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(intent, buf.id).length },
     });
 
     assert.equal(run.ok, false);
@@ -142,13 +143,13 @@ describe("zero matches and find-only (no replacement)", () => {
     const run = actions.previewRun({
       actionId: saved.id,
       bufferId: buf.id,
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(intent, buf.id).length },
     });
 
     assert.equal(run.ok, false);
     if (run.ok) return;
     assert.equal(run.reason, "no_replacement");
-    assert.equal(intent.getBuffer(buf.id).text, "alpha beta alpha");
+    assert.equal(bufferBody(intent, buf.id), "alpha beta alpha");
   });
 });
 
@@ -167,7 +168,7 @@ describe("Accept / reject via existing write seam", () => {
     const run = actions.previewRun({
       actionId: saved.id,
       bufferId: buf.id,
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(intent, buf.id).length },
     });
     assert.equal(run.ok, true);
     if (!run.ok) return;
@@ -177,7 +178,7 @@ describe("Accept / reject via existing write seam", () => {
     const accepted = intent.accept(run.patches);
     assert.equal(accepted.ok, true);
     if (!accepted.ok) return;
-    assert.equal(intent.getBuffer(buf.id).text, "owl dog owl");
+    assert.equal(bufferBody(intent, buf.id), "owl dog owl");
 
     const audit = intent.getProvenanceAudit(buf.id);
     assert.ok(audit.length >= 1);
@@ -185,18 +186,18 @@ describe("Accept / reject via existing write seam", () => {
     assert.equal(intent.getMainHistory(buf.id)[0]!.committedBy, "user");
 
     intent.undo(accepted.undoGroupId);
-    assert.equal(intent.getBuffer(buf.id).text, "cat dog cat");
+    assert.equal(bufferBody(intent, buf.id), "cat dog cat");
 
     // Reject path: preview again, reject by previewId — no write.
     const again = actions.previewRun({
       actionId: saved.id,
       bufferId: buf.id,
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(intent, buf.id).length },
     });
     assert.equal(again.ok, true);
     if (!again.ok) return;
     intent.reject(again.previewId);
-    assert.equal(intent.getBuffer(buf.id).text, "cat dog cat");
+    assert.equal(bufferBody(intent, buf.id), "cat dog cat");
     assert.equal(intent.getOutstandingPreview(again.previewId), undefined);
   });
 });

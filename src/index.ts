@@ -1,3 +1,16 @@
+export {
+  createUntitled,
+  openPath as openBufferCorePath,
+  save as saveBufferCore,
+  len as bufferCoreLen,
+  rev as bufferCoreRev,
+  lineCount as bufferCoreLineCount,
+  slice as bufferCoreSlice,
+  lineWindow as bufferCoreLineWindow,
+  replaceRange as bufferCoreReplaceRange,
+  dropBuffer,
+} from "./buffer-core.js";
+export type { LineWindow } from "./buffer-core.js";
 export { IntentService } from "./intent-service.js";
 export {
   ActionService,
@@ -64,12 +77,28 @@ export type {
 } from "./visual-ten-second-demo.js";
 export {
   runWindowsGates,
+  ensure100MbFixture,
+  assertPackagedNativeLayout,
+  evaluateTyping100MbGate,
+  evaluateScroll100MbGate,
   LARGE_FILE_CHARS,
+  FIXTURE_100MB_BYTES,
   COLD_START_MAX_MS,
   HOTKEY_EVOKE_MAX_MS,
   LARGE_FILE_MAX_MS,
+  OPEN_100MB_EDITABLE_MAX_MS,
+  TYPING_100MB_MAX_MS,
+  SCROLL_100MB_MAX_MS,
 } from "./windows-gates.js";
-export type { GateResult, WindowsGatesReport } from "./windows-gates.js";
+export type {
+  GateResult,
+  GateName,
+  WindowsGatesReport,
+} from "./windows-gates.js";
+export {
+  resolveNativeAddonPath,
+  nativeAddonSearchDirs,
+} from "./buffer-core.js";
 export {
   decodeBytes,
   encodeText,

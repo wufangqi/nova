@@ -111,7 +111,19 @@ export async function runVisualTenSecondDemo(
   if (!pasted.ok) {
     return fail(steps, started, pasted.error, tabs.length);
   }
-  const textBefore = pasted.result.buffer.text;
+  // Shell snapshots omit full text (WUF-101); read via slice.
+  const beforeSlice = await host.handle({
+    method: "slice",
+    params: {
+      id: pasted.result.buffer.id,
+      start: 0,
+      end: pasteText.length,
+    },
+  });
+  if (!beforeSlice.ok) {
+    return fail(steps, started, beforeSlice.error, tabs.length);
+  }
+  const textBefore = beforeSlice.result.text;
 
   const selection =
     options.selection ??
@@ -174,11 +186,30 @@ export async function runVisualTenSecondDemo(
         ? "cloud"
         : "local_preinstalled";
 
+  const lenRes = await host.handle({
+    method: "buffer_len",
+    params: { id: state.result.buffer.id },
+  });
+  if (!lenRes.ok) {
+    return fail(steps, started, lenRes.error, tabs.length, textBefore);
+  }
+  const afterSlice = await host.handle({
+    method: "slice",
+    params: {
+      id: state.result.buffer.id,
+      start: 0,
+      end: lenRes.result.len,
+    },
+  });
+  if (!afterSlice.ok) {
+    return fail(steps, started, afterSlice.error, tabs.length, textBefore);
+  }
+
   return {
     ok: true,
     steps,
     textBefore,
-    textAfter: state.result.buffer.text,
+    textAfter: afterSlice.result.text,
     diffText,
     undoGroupId: accepted.result.accept.undoGroupId,
     elapsedMs: performance.now() - started,

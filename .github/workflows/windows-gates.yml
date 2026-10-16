@@ -1,0 +1,51 @@
+# Windows capability floors (WUF-79 / WUF-102 / ADR-0004).
+# Forces gates:windows on windows-latest so 100MB open→editable is CI-proven.
+
+name: Windows Gates
+
+on:
+  push:
+    branches:
+      - main
+      - feature/wuf-95-perf-kernel
+      - "feature/wuf-*"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-gates-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-gates:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache (buffer-core)
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: native/buffer-core -> target
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build native Buffer core
+        run: npm run build:native
+
+      - name: Windows capability floors (100MB + cold-start / hotkey)
+        run: npm run gates:windows
+
+      - name: 100MB gate contracts (non-vacuous typing/scroll assertions)
+        run: npx tsx --test tests/windows-100mb-gates-contract.test.ts

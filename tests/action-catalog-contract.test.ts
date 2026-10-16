@@ -14,6 +14,7 @@ import {
   MemoryActionStore,
 } from "../src/action-service.js";
 import { IntentService } from "../src/intent-service.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 describe("save from RegexDraft preview", () => {
   it("saves a valid regex_draft preview with default display name = utterance", () => {
@@ -110,7 +111,7 @@ describe("save eligibility failures are distinguishable", () => {
       intent.parse({
         bufferId: buf.id,
         utterance: "make it uppercase",
-        selection: { start: 0, end: buf.text.length },
+        selection: { start: 0, end: bufferBody(intent, buf.id).length },
       }),
     );
     assert.equal(preview.kind, "patches");
@@ -132,7 +133,7 @@ describe("save eligibility failures are distinguishable", () => {
       intent.parse({
         bufferId: buf.id,
         utterance: "explain this",
-        selection: { start: 0, end: buf.text.length },
+        selection: { start: 0, end: bufferBody(intent, buf.id).length },
       }),
     );
     assert.equal(preview.kind, "explanation");

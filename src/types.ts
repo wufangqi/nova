@@ -23,12 +23,23 @@ export interface Provenance {
 
 export interface BufferSnapshot {
   id: BufferId;
-  text: string;
+  /**
+   * Logical text. Omitted by default (IntentService + IPC) — callers must use
+   * slice / lineWindow / len, or pass `{ includeText: true }` explicitly.
+   * Full text is never the silent default (WUF-98/WUF-99).
+   */
+  text?: string;
   revision: Revision;
   encoding: string;
   eol: Eol;
   /** Whether Path IO should write a BOM for this Encoding. */
   bom: boolean;
+}
+
+/** Opt-in when a caller truly needs the whole Buffer body in JS. */
+export interface BufferSnapshotOptions {
+  /** When true, snapshot includes full text. Default: omit. */
+  includeText?: boolean;
 }
 
 /** Optional Buffer metadata applied only when Accept is explicit about it. */
@@ -67,12 +78,25 @@ export type AcceptFail = {
 };
 export type AcceptResult = AcceptOk | AcceptFail;
 
+/**
+ * Bounded fingerprint of Buffer body for history / Provenance audit.
+ * Never stores the whole Buffer in the TS heap (WUF-99 / US31).
+ */
+export interface BufferTextFingerprint {
+  len: number;
+  revision: Revision;
+  /** Leading sample (bounded). */
+  head: string;
+  /** Trailing sample (bounded). */
+  tail: string;
+}
+
 /** Main editing history: Accept is always a human commit. */
 export interface MainHistoryEntry {
   undoGroupId: UndoGroupId;
   committedBy: "user";
   bufferRevisionAfter: Revision;
-  textAfter: string;
+  after: BufferTextFingerprint;
 }
 
 /** Audit side-car: original Provenance survives Accept (ADR-0002). */
@@ -82,8 +106,8 @@ export interface ProvenanceAuditEntry {
   originalProvenance: Provenance;
   intentId?: IntentId;
   bufferId: BufferId;
-  textBefore: string;
-  textAfter: string;
+  before: BufferTextFingerprint;
+  after: BufferTextFingerprint;
 }
 
 export interface BufferCreateOptions {

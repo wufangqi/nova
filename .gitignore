@@ -6,6 +6,10 @@ desktop/node_modules/
 desktop/dist/
 desktop/src-tauri/target/
 desktop/src-tauri/resources/nova-dist/
+desktop/src-tauri/resources/native/
 desktop/src-tauri/resources/bin/node.exe
 desktop/src-tauri/resources/bin/node
+native/buffer-core/node_modules/
+native/buffer-core/target/
+native/buffer-core/*.node
 

@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { IntentService } from "../src/intent-service.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 describe("Explanation preview (not Patch)", () => {
   it("Intent preview returns Explanation rather than Patch", () => {
@@ -14,7 +15,7 @@ describe("Explanation preview (not Patch)", () => {
     const intent = svc.parse({
       bufferId: buf.id,
       utterance: "explain this",
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(svc, buf.id).length },
     });
     const preview = svc.preview(intent);
 
@@ -45,11 +46,11 @@ describe("Explanation does not mutate Buffer", () => {
     assert.equal(preview.kind, "explanation");
     if (preview.kind !== "explanation") return;
 
-    assert.equal(svc.getBuffer(buf.id).text, original);
+    assert.equal(bufferBody(svc, buf.id), original);
     assert.equal(svc.getBuffer(buf.id).revision, buf.revision);
 
     svc.reject(preview.previewId);
-    assert.equal(svc.getBuffer(buf.id).text, original);
+    assert.equal(bufferBody(svc, buf.id), original);
     assert.equal(svc.getBuffer(buf.id).revision, buf.revision);
     assert.equal(svc.getMainHistory(buf.id).length, 0);
   });
@@ -63,7 +64,7 @@ describe("valid anchors jump", () => {
     const intent = svc.parse({
       bufferId: buf.id,
       utterance: "explain",
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(svc, buf.id).length },
     });
     const preview = svc.preview(intent);
     assert.equal(preview.kind, "explanation");
@@ -79,7 +80,7 @@ describe("valid anchors jump", () => {
     if (!jump.ok) return;
     assert.equal(jump.status, "valid");
     assert.equal(
-      svc.getBuffer(buf.id).text.slice(jump.start, jump.end),
+      bufferBody(svc, buf.id).slice(jump.start, jump.end),
       anchor!.excerpt,
     );
   });
@@ -93,7 +94,7 @@ describe("stale anchors are invalid and distinguishable", () => {
     const intent = svc.parse({
       bufferId: buf.id,
       utterance: "explain problems",
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(svc, buf.id).length },
     });
     const preview = svc.preview(intent);
     assert.equal(preview.kind, "explanation");
@@ -126,7 +127,7 @@ describe("stale anchors are invalid and distinguishable", () => {
     const intent = svc.parse({
       bufferId: buf.id,
       utterance: "explain",
-      selection: { start: 0, end: buf.text.length },
+      selection: { start: 0, end: bufferBody(svc, buf.id).length },
     });
     const preview = svc.preview(intent);
     assert.equal(preview.kind, "explanation");

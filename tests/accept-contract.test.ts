@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { IntentService } from "../src/intent-service.js";
 import type { Patch } from "../src/types.js";
+import { bufferBody } from './helpers/buffer-text.js';
 
 function aiPatch(
   bufferId: string,
@@ -26,7 +27,9 @@ describe("Buffer substrate", () => {
   it("creates an in-memory Buffer with logical text and a revision", () => {
     const svc = new IntentService();
     const buf = svc.createBuffer("hello");
-    assert.equal(buf.text, "hello");
+    // Default snapshot omits full text — body via slice/len.
+    assert.equal(buf.text, undefined);
+    assert.equal(bufferBody(svc, buf.id), "hello");
     assert.equal(typeof buf.id, "string");
     assert.equal(buf.revision, 0);
   });
@@ -35,9 +38,9 @@ describe("Buffer substrate", () => {
     const svc = new IntentService();
     const buf = svc.createBuffer("hello");
     const next = svc.editBuffer(buf.id, "hello world");
-    assert.equal(next.text, "hello world");
+    assert.equal(next.text, undefined);
     assert.equal(next.revision, 1);
-    assert.equal(svc.getBuffer(buf.id).text, "hello world");
+    assert.equal(bufferBody(svc, buf.id), "hello world");
   });
 });
 
@@ -52,7 +55,7 @@ describe("Accept writes via IntentService", () => {
     ]);
     assert.equal(result.ok, true);
     if (!result.ok) return;
-    assert.equal(svc.getBuffer(buf.id).text, "hello nova");
+    assert.equal(bufferBody(svc, buf.id), "hello nova");
     assert.ok(svc.getBuffer(buf.id).revision > buf.revision);
   });
 });
@@ -69,10 +72,10 @@ describe("UndoGroup", () => {
     ]);
     assert.equal(result.ok, true);
     if (!result.ok) return;
-    assert.equal(svc.getBuffer(buf.id).text, "XXX bbb ZZZ");
+    assert.equal(bufferBody(svc, buf.id), "XXX bbb ZZZ");
 
     svc.undo(result.undoGroupId);
-    assert.equal(svc.getBuffer(buf.id).text, "aaa bbb ccc");
+    assert.equal(bufferBody(svc, buf.id), "aaa bbb ccc");
   });
 });
 
@@ -100,7 +103,7 @@ describe("relocate failure voids the batch", () => {
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.reason, "reloc_failed");
-    assert.equal(svc.getBuffer(buf.id).text, "ALPHA beta gamma");
+    assert.equal(bufferBody(svc, buf.id), "ALPHA beta gamma");
   });
 
   it("does not partially apply a multi-edit batch on relocate failure", () => {
@@ -130,7 +133,7 @@ describe("relocate failure voids the batch", () => {
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.equal(result.reason, "reloc_failed");
-    assert.equal(svc.getBuffer(buf.id).text, "ONE two three");
+    assert.equal(bufferBody(svc, buf.id), "ONE two three");
   });
 });
 
@@ -159,5 +162,11 @@ describe("dual-track Provenance", () => {
     assert.equal(entry.originalProvenance.source, "ai");
     assert.equal(entry.intentId, "intent-1");
     assert.equal(entry.committedBy, "user");
+    // Fingerprints — never whole-Buffer copies in the TS heap.
+    assert.equal(entry.before.len, "plain text".length);
+    assert.equal(entry.after.len, "Plain text".length);
+    assert.ok(entry.before.head.length <= 64);
+    assert.ok(entry.after.head.length <= 64);
+    assert.equal(last.after.len, "Plain text".length);
   });
 });

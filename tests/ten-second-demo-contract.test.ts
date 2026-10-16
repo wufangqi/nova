@@ -63,7 +63,11 @@ describe("offline editor ≠ offline AI (ADR-0003)", () => {
     const shell = new EditorShell(svc);
     shell.handleHotkeyEvoke();
     shell.editActive("edit without model");
-    assert.equal(shell.getActiveBuffer().text, "edit without model");
+    assert.equal(shell.getActiveBuffer().text, undefined);
+    assert.equal(
+      svc.slice(shell.activeBufferId!, 0, svc.len(shell.activeBufferId!)),
+      "edit without model",
+    );
 
     const find = new FindBar(svc);
     const hits = find.find({
@@ -98,12 +102,20 @@ describe("offline editor ≠ offline AI (ADR-0003)", () => {
   });
 });
 
-describe("Windows capability floors (cold start / hotkey / large file)", () => {
-  it("runs cold-start, hotkey-evoke, and large-file gates within floors", () => {
-    const report = runWindowsGates();
+describe("Windows capability floors (cold start / hotkey / large file / 100MB)", () => {
+  it("runs cold-start, hotkey-evoke, large-file, and 100MB gates within floors", async () => {
+    const report = await runWindowsGates();
     assert.equal(report.ok, true);
     const names = report.gates.map((g) => g.name);
-    assert.deepEqual(names, ["cold_start", "hotkey_evoke", "large_file"]);
+    assert.deepEqual(names, [
+      "cold_start",
+      "hotkey_evoke",
+      "large_file",
+      "open_100mb_editable",
+      "typing_100mb",
+      "scroll_100mb",
+      "native_addon_load",
+    ]);
     for (const g of report.gates) {
       assert.equal(g.ok, true, `${g.name}: ${g.detail}`);
       assert.ok(g.elapsedMs >= 0);
@@ -112,11 +124,18 @@ describe("Windows capability floors (cold start / hotkey / large file)", () => {
     assert.match(large.detail, new RegExp(String(LARGE_FILE_CHARS)));
     // Large Buffer Intent Scope stays sampled — never whole-file model context.
     assert.match(large.detail, /sampled|sample/i);
+    const typing = report.gates.find((g) => g.name === "typing_100mb")!;
+    const scroll = report.gates.find((g) => g.name === "scroll_100mb")!;
+    assert.ok(typing.elapsedMs >= 0);
+    assert.ok(scroll.elapsedMs >= 0);
+    // Budgets must be concrete (non-vacuous) — enforced by gate constants + fail path.
+    assert.match(typing.detail, /≤/);
+    assert.match(scroll.detail, /≤/);
   });
 });
 
 describe("no Workspace / Project / Recipe in Demo path", () => {
-  it("Demo and gates expose only Buffer tabs — no workspace nouns", () => {
+  it("Demo and gates expose only Buffer tabs — no workspace nouns", async () => {
     const result = runTenSecondDemo({
       pasteText: "x",
       utterance: "uppercase",
@@ -126,7 +145,7 @@ describe("no Workspace / Project / Recipe in Demo path", () => {
     assert.equal(result.usedProjectNoun, false);
     assert.equal(result.usedRecipeNoun, false);
 
-    const report = runWindowsGates();
+    const report = await runWindowsGates();
     assert.equal(report.usedWorkspaceNoun, false);
     assert.equal(report.usedProjectNoun, false);
   });

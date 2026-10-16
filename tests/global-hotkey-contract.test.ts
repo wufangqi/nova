@@ -34,7 +34,7 @@ describe("global hotkey evoke port", () => {
     const created = onGlobalHotkeyPressed(shell);
 
     assert.notEqual(created.id, prior.id);
-    assert.equal(created.text, "");
+    assert.equal(created.text, undefined);
     assert.equal(shell.activeBufferId, created.id);
     assert.equal(shell.listTabs().length, 2);
     assert.ok(shell.listTabs().some((t) => t.bufferId === prior.id));
@@ -44,7 +44,12 @@ describe("global hotkey evoke port", () => {
     );
 
     shell.activateTab(prior.id);
-    assert.equal(shell.getActiveBuffer().text, "keep me");
+    assert.equal(shell.getActiveBuffer().text, undefined);
+    const intent = shell.intentService();
+    assert.equal(
+      intent.slice(prior.id, 0, intent.len(prior.id)),
+      "keep me",
+    );
   });
 });
 
@@ -82,6 +87,18 @@ describe("IPC evoke path used by the hotkey port", () => {
     });
     assert.equal(switchBack.ok, true);
     if (!switchBack.ok) return;
-    assert.equal(switchBack.result.buffer.text, "scratch that must survive");
+    // Shell snapshots omit full text (WUF-101); verify via slice.
+    assert.equal(switchBack.result.buffer.text, undefined);
+    const slice = await host.handle({
+      method: "slice",
+      params: {
+        id: switchBack.result.buffer.id,
+        start: 0,
+        end: "scratch that must survive".length,
+      },
+    });
+    assert.equal(slice.ok, true);
+    if (!slice.ok) return;
+    assert.equal(slice.result.text, "scratch that must survive");
   });
 });
