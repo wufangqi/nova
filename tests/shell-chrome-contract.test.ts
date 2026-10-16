@@ -13,6 +13,7 @@ import {
   SHELL_TOOLBAR_FILE_ACTIONS,
   resolveShellShortcut,
   runShellAction,
+  shouldDismissDetailsMenu,
   type ShellChromeAction,
   type ShellChromeHandlers,
   type ShellFileAction,
@@ -146,6 +147,30 @@ describe("Ctrl+N / O / S / Shift+S / F shortcuts", () => {
       }),
       null,
     );
+  });
+});
+
+describe("File menu dismisses on outside pointer", () => {
+  it("does not dismiss when closed or when target is inside the menu", () => {
+    const inside = { nodeType: 1 } as unknown as Node;
+    const menu = {
+      open: false,
+      contains: (n: Node) => n === inside,
+    };
+    assert.equal(shouldDismissDetailsMenu(menu, inside), false);
+    menu.open = true;
+    assert.equal(shouldDismissDetailsMenu(menu, inside), false);
+  });
+
+  it("dismisses when open and the target is outside (or missing)", () => {
+    const inside = { nodeType: 1 } as unknown as Node;
+    const outside = { nodeType: 1 } as unknown as Node;
+    const menu = {
+      open: true,
+      contains: (n: Node) => n === inside,
+    };
+    assert.equal(shouldDismissDetailsMenu(menu, outside), true);
+    assert.equal(shouldDismissDetailsMenu(menu, null), true);
   });
 });
 

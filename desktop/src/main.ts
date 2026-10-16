@@ -30,6 +30,7 @@ import {
   SHELL_FILE_MENU_ITEMS,
   resolveShellShortcut,
   runShellAction,
+  shouldDismissDetailsMenu,
   type ShellChromeHandlers,
 } from "./shell-chrome.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
@@ -1443,6 +1444,7 @@ function closeFileMenu(): void {
 }
 
 function mountFileMenu(handlers: ShellChromeHandlers): void {
+  const menu = document.getElementById("file-menu");
   const list = el<HTMLUListElement>("file-menu-list");
   list.replaceChildren();
   for (const item of SHELL_FILE_MENU_ITEMS) {
@@ -1467,6 +1469,18 @@ function mountFileMenu(handlers: ShellChromeHandlers): void {
     li.append(btn);
     list.append(li);
   }
+  // WebView2 keeps <details> open on outside click — dismiss explicitly.
+  document.addEventListener(
+    "pointerdown",
+    (ev) => {
+      if (!(menu instanceof HTMLDetailsElement)) return;
+      if (shouldDismissDetailsMenu(menu, ev.target)) menu.open = false;
+    },
+    true,
+  );
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeFileMenu();
+  });
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -1623,9 +1637,11 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 
   // Window close: RecoveryBuffer persist only — never per-tab three-button storm.
+  // Must destroy/close after preventDefault; destroy needs core:window:allow-destroy.
   void getCurrentWindow()
     .onCloseRequested(async (event) => {
       event.preventDefault();
+      const win = getCurrentWindow();
       try {
         const outcome = await runWindowQuitRecovery({
           persistDirty: persistRecoveryOnWindowQuit,
@@ -1638,7 +1654,16 @@ window.addEventListener("DOMContentLoaded", () => {
         setStatus(String(err));
         await new Promise((r) => setTimeout(r, 350));
       }
-      await getCurrentWindow().destroy();
+      try {
+        await win.destroy();
+      } catch (err) {
+        setStatus(`Window destroy failed: ${String(err)}`);
+        try {
+          await win.close();
+        } catch (closeErr) {
+          setStatus(`Window close failed: ${String(closeErr)}`);
+        }
+      }
     })
     .catch(() => {
       /* non-Tauri / capability missing — contracts cover the seam */

@@ -71,3 +71,22 @@ export function runShellAction(
 ): void | Promise<void> {
   return handlers[action]();
 }
+
+/**
+ * Whether a pointer/click outside an open `<details>` menu should dismiss it.
+ * Native details does not close on outside click in WebView2.
+ */
+export function shouldDismissDetailsMenu(
+  menu: { open: boolean; contains(node: Node): boolean },
+  target: EventTarget | null,
+): boolean {
+  if (!menu.open) return false;
+  // Duck-type Node so Node test runners (no DOM globals) can still unit-test.
+  if (
+    !target ||
+    typeof (target as { nodeType?: unknown }).nodeType !== "number"
+  ) {
+    return true;
+  }
+  return !menu.contains(target as Node);
+}
