@@ -53,21 +53,6 @@
 
       <nav id="tab-bar" class="tab-bar" aria-label="Buffers"></nav>
 
-      <div class="editor-chrome">
-        <label class="goto-field" title="Jump to line without loading full text">
-          <span>Go to line</span>
-          <input
-            id="goto-line"
-            type="number"
-            min="1"
-            step="1"
-            placeholder="1"
-            spellcheck="false"
-          />
-        </label>
-        <button type="button" id="goto-line-go">Go</button>
-      </div>
-
       <div
         id="editor-viewport"
         class="editor-viewport"
@@ -83,6 +68,28 @@
             disabled
           ></textarea>
         </div>
+      </div>
+
+      <!-- Ctrl+G mini goto-line popup: Enter jumps / Esc dismisses. -->
+      <div
+        id="goto-line-popup"
+        class="goto-line-popup"
+        role="dialog"
+        aria-modal="false"
+        aria-label="Go to line"
+        hidden
+      >
+        <label class="goto-field" title="Jump to line without loading full text">
+          <span>Go to line</span>
+          <input
+            id="goto-line"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="1"
+            spellcheck="false"
+          />
+        </label>
       </div>
 
       <!-- Modeless Find dialog: not showModal — editor stays editable while open. -->
