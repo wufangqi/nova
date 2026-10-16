@@ -23,15 +23,18 @@ import {
   type FindDialogPort,
   type FindDialogSurface,
 } from "./find-dialog.ts";
+import { APP_PRODUCT_NAME, APP_VERSION } from "./app-meta.ts";
 import { GotoLinePopup, type GotoLinePopupSurface } from "./goto-line-popup.ts";
-import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
 import { closeTabWithPrompter, type TabClosePort } from "./tab-close.ts";
 import {
   SHELL_FILE_MENU_ITEMS,
+  SHELL_HELP_MENU_ITEMS,
+  aboutInfoFromConfig,
   resolveShellShortcut,
   runShellAction,
   shouldDismissDetailsMenu,
+  type ShellChromeAction,
   type ShellChromeHandlers,
 } from "./shell-chrome.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
@@ -729,13 +732,10 @@ function mountTitleChrome() {
 }
 
 async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
-  const pathInput = el<HTMLInputElement>("path-input");
   activeId = buffer?.id ?? null;
   renderTabs(tabs);
   await virtualEditor.bind(buffer?.id ?? null, buffer?.revision);
   const active = tabs.find((t) => t.active);
-  // Always sync — untitled must clear so Save cannot reuse another tab's Path.
-  pathInput.value = pathInputValueForActive(active);
   await syncTitleChrome(active);
   await refreshStatusMetrics();
 }
@@ -1615,49 +1615,101 @@ function openFindChrome(): void {
   findDialog.focusPattern();
 }
 
-function closeFileMenu(): void {
-  const menu = document.getElementById("file-menu");
-  if (menu instanceof HTMLDetailsElement) menu.open = false;
+function closeChromeMenus(): void {
+  for (const id of ["file-menu", "help-menu"] as const) {
+    const menu = document.getElementById(id);
+    if (menu instanceof HTMLDetailsElement) menu.open = false;
+  }
 }
 
-function mountFileMenu(handlers: ShellChromeHandlers): void {
-  const menu = document.getElementById("file-menu");
-  const list = el<HTMLUListElement>("file-menu-list");
-  list.replaceChildren();
-  for (const item of SHELL_FILE_MENU_ITEMS) {
-    const li = document.createElement("li");
-    li.setAttribute("role", "none");
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.setAttribute("role", "menuitem");
-    btn.dataset.shellAction = item.id;
-    const label = document.createElement("span");
-    label.textContent = item.label;
+function appendMenuItem(
+  list: HTMLUListElement,
+  opts: {
+    id: ShellChromeAction;
+    label: string;
+    accelerator?: string;
+    handlers: ShellChromeHandlers;
+  },
+): void {
+  const li = document.createElement("li");
+  li.setAttribute("role", "none");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.setAttribute("role", "menuitem");
+  btn.dataset.shellAction = opts.id;
+  const label = document.createElement("span");
+  label.textContent = opts.label;
+  btn.append(label);
+  if (opts.accelerator) {
     const accel = document.createElement("span");
     accel.className = "accel";
-    accel.textContent = item.accelerator;
-    btn.append(label, accel);
-    btn.addEventListener("click", () => {
-      closeFileMenu();
-      void Promise.resolve(runShellAction(item.id, handlers)).catch((err) =>
-        setStatus(String(err)),
-      );
-    });
-    li.append(btn);
-    list.append(li);
+    accel.textContent = opts.accelerator;
+    btn.append(accel);
   }
+  btn.addEventListener("click", () => {
+    closeChromeMenus();
+    void Promise.resolve(runShellAction(opts.id, opts.handlers)).catch((err) =>
+      setStatus(String(err)),
+    );
+  });
+  li.append(btn);
+  list.append(li);
+}
+
+function mountShellMenus(handlers: ShellChromeHandlers): void {
+  const fileList = el<HTMLUListElement>("file-menu-list");
+  fileList.replaceChildren();
+  for (const item of SHELL_FILE_MENU_ITEMS) {
+    appendMenuItem(fileList, {
+      id: item.id,
+      label: item.label,
+      accelerator: item.accelerator,
+      handlers,
+    });
+  }
+
+  const helpList = el<HTMLUListElement>("help-menu-list");
+  helpList.replaceChildren();
+  for (const item of SHELL_HELP_MENU_ITEMS) {
+    appendMenuItem(helpList, {
+      id: item.id,
+      label: item.label,
+      accelerator: item.accelerator,
+      handlers,
+    });
+  }
+
   // WebView2 keeps <details> open on outside click — dismiss explicitly.
   document.addEventListener(
     "pointerdown",
     (ev) => {
-      if (!(menu instanceof HTMLDetailsElement)) return;
-      if (shouldDismissDetailsMenu(menu, ev.target)) menu.open = false;
+      for (const id of ["file-menu", "help-menu"] as const) {
+        const menu = document.getElementById(id);
+        if (!(menu instanceof HTMLDetailsElement)) continue;
+        if (shouldDismissDetailsMenu(menu, ev.target)) menu.open = false;
+      }
     },
     true,
   );
   document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape") closeFileMenu();
+    if (ev.key === "Escape") closeChromeMenus();
   });
+}
+
+function openAboutDialog(): void {
+  const info = aboutInfoFromConfig({
+    productName: APP_PRODUCT_NAME,
+    version: APP_VERSION,
+  });
+  el("about-name").textContent = info.name;
+  el("about-version").textContent = `Version ${info.version}`;
+  el("about-blurb").textContent = info.blurb;
+  const dialog = el<HTMLDialogElement>("about-dialog");
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -1672,35 +1724,14 @@ window.addEventListener("DOMContentLoaded", () => {
     save_as: () => saveAsPath(),
     find: () => openFindChrome(),
     demo: () => runVisualDemo().catch((err) => setStatus(String(err))),
+    about: () => openAboutDialog(),
+    // Same three-way ClosePrompter path as the tab × button.
+    close: () => closeActive(),
   };
 
-  mountFileMenu(shellHandlers);
+  mountShellMenus(shellHandlers);
   mountTitleChrome();
 
-  for (const node of document.querySelectorAll<HTMLElement>(
-    ".toolbar [data-shell-action]",
-  )) {
-    const action = node.dataset.shellAction;
-    if (
-      action !== "new" &&
-      action !== "open" &&
-      action !== "save" &&
-      action !== "save_as" &&
-      action !== "find" &&
-      action !== "demo"
-    ) {
-      continue;
-    }
-    node.addEventListener("click", () => {
-      void Promise.resolve(runShellAction(action, shellHandlers)).catch((err) =>
-        setStatus(String(err)),
-      );
-    });
-  }
-
-  el<HTMLButtonElement>("close-tab").addEventListener("click", () => {
-    void closeActive();
-  });
   virtualEditor = new VirtualEditor(
     el("editor-viewport"),
     el("editor-spacer"),

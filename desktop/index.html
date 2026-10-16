@@ -19,41 +19,11 @@
           <summary>File</summary>
           <ul role="menu" id="file-menu-list"></ul>
         </details>
+        <details class="menu" id="help-menu">
+          <summary>Help</summary>
+          <ul role="menu" id="help-menu-list"></ul>
+        </details>
       </nav>
-      <header class="toolbar">
-        <button type="button" id="new-tab" data-shell-action="new">New</button>
-        <button
-          type="button"
-          id="run-demo"
-          data-shell-action="demo"
-          title="Visual ten-second Demo: new Buffer → paste → Intent → diff → Accept"
-        >
-          Demo
-        </button>
-        <label class="path-field">
-          <span>Path</span>
-          <input
-            id="path-input"
-            type="text"
-            readonly
-            placeholder="(untitled)"
-            spellcheck="false"
-            title="Path is display-only — use Open / Save / Save As"
-          />
-        </label>
-        <button type="button" id="open-path" data-shell-action="open">Open</button>
-        <button type="button" id="save" data-shell-action="save">Save</button>
-        <button type="button" id="save-as" data-shell-action="save_as">Save As</button>
-        <button
-          type="button"
-          id="find-open"
-          data-shell-action="find"
-          title="Find (Ctrl+F)"
-        >
-          Find
-        </button>
-        <button type="button" id="close-tab">Close</button>
-      </header>
 
       <nav id="tab-bar" class="tab-bar" aria-label="Buffers"></nav>
 
@@ -241,6 +211,17 @@ placeholder="e.g. uppercase / regex a(\d) / explain this"
           >
         </div>
       </footer>
+
+      <!-- Help → About: name + version from app config + short blurb. -->
+      <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-title">
+        <form method="dialog" class="about-form">
+          <h2 id="about-title" class="about-title">About</h2>
+          <p class="about-name" id="about-name"></p>
+          <p class="about-version" id="about-version"></p>
+          <p class="about-blurb" id="about-blurb"></p>
+          <button type="submit" value="ok" class="about-ok">OK</button>
+        </form>
+      </dialog>
     </div>
   </body>
 </html>
