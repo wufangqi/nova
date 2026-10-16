@@ -75,7 +75,10 @@ export type IpcMethod =
   | "list_actions"
   | "rename_action"
   | "delete_action"
-  | "preview_run";
+  | "preview_run"
+  | "recovery_persist_quit"
+  | "recovery_restore_launch"
+  | "recovery_drop";
 
 export type CreateBufferRequest = {
   method: "create_buffer";
@@ -311,6 +314,22 @@ export type PreviewRunRequest = {
   };
 };
 
+/** WUF-109 — RecoveryBuffer quit/launch/drop (no ClosePrompter storm on quit). */
+export type RecoveryPersistQuitRequest = {
+  method: "recovery_persist_quit";
+  params: Record<string, never> | {};
+};
+
+export type RecoveryRestoreLaunchRequest = {
+  method: "recovery_restore_launch";
+  params: Record<string, never> | {};
+};
+
+export type RecoveryDropRequest = {
+  method: "recovery_drop";
+  params: { id: string };
+};
+
 export type IpcRequest =
   | CreateBufferRequest
   | GetBufferRequest
@@ -348,7 +367,10 @@ export type IpcRequest =
   | ListActionsRequest
   | RenameActionRequest
   | DeleteActionRequest
-  | PreviewRunRequest;
+  | PreviewRunRequest
+  | RecoveryPersistQuitRequest
+  | RecoveryRestoreLaunchRequest
+  | RecoveryDropRequest;
 
 export type IpcOk<T> = { ok: true; result: T };
 export type IpcErr = { ok: false; error: string };
@@ -470,4 +492,18 @@ export type PreviewRunIpcResult = {
   run: PreviewRunResult;
   buffer: BufferSnapshot;
   tabs: TabInfo[];
+};
+
+export type RecoveryPersistQuitResult = {
+  preservedCount: number;
+};
+
+export type RecoveryRestoreLaunchResult = {
+  restoredCount: number;
+  buffer: BufferSnapshot | null;
+  tabs: TabInfo[];
+};
+
+export type RecoveryDropResult = {
+  dropped: true;
 };

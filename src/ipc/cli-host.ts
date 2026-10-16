@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import readline from "node:readline";
 import { FileActionStore } from "../action-service.js";
+import { createFileRecoveryStore } from "../recovery-store.js";
 import { IntentIpcHost } from "./host.js";
 import type { IpcRequest } from "./protocol.js";
 
@@ -17,9 +18,17 @@ function resolveActionStoreDir(): string {
   return join(homedir(), ".nova", "actions");
 }
 
+function resolveRecoveryStoreDir(): string {
+  if (process.env.NOVA_RECOVERY_STORE_DIR) {
+    return process.env.NOVA_RECOVERY_STORE_DIR;
+  }
+  return join(homedir(), ".nova", "recovery");
+}
+
 const host = new IntentIpcHost({
   cloudEnabled: process.env.NOVA_CLOUD_ENABLED === "1",
   actionStore: new FileActionStore(resolveActionStoreDir()),
+  recoveryStore: createFileRecoveryStore(resolveRecoveryStoreDir()),
 });
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ActionPanel,
   type ActionPanelPort,
@@ -33,6 +34,7 @@ import {
 } from "./shell-chrome.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
+import { runWindowQuitRecovery } from "./window-quit.ts";
 
 const pathPicker = createTauriPathPicker();
 let closePrompter = createDomClosePrompter(document.body);
@@ -764,8 +766,18 @@ async function openPath() {
   }
 }
 
+async function noteRecoveryDrop(bufferId: string | null | undefined) {
+  if (!bufferId) return;
+  try {
+    await invoke("recovery_drop_cmd", { id: bufferId });
+  } catch {
+    /* recovery drop is best-effort */
+  }
+}
+
 async function save() {
   try {
+    const savedId = activeId;
     const outcome = await saveWithPicker(pathPicker, fileOpsPort);
     if (outcome.kind === "cancelled") {
       setStatus("Save As cancelled");
@@ -776,10 +788,12 @@ async function save() {
       return;
     }
     if (outcome.kind === "saved") {
+      await noteRecoveryDrop(savedId);
       setStatus(`Saved ${outcome.path}`);
       return;
     }
     if (outcome.kind === "saved_as") {
+      await noteRecoveryDrop(savedId);
       setStatus(`Saved as ${outcome.path}`);
     }
   } catch (err) {
@@ -789,6 +803,7 @@ async function save() {
 
 async function saveAsPath() {
   try {
+    const savedId = activeId;
     const outcome = await saveAsWithPicker(pathPicker, fileOpsPort);
     if (outcome.kind === "cancelled") {
       setStatus("Save As cancelled");
@@ -799,6 +814,7 @@ async function saveAsPath() {
       return;
     }
     if (outcome.kind === "saved_as") {
+      await noteRecoveryDrop(savedId);
       setStatus(`Saved as ${outcome.path}`);
     }
   } catch (err) {
@@ -821,6 +837,12 @@ async function closeBuffer(bufferId: string) {
       setStatus("Close cancelled");
       return;
     }
+    if (
+      outcome.kind === "closed" &&
+      (outcome.via === "discard" || outcome.via === "save")
+    ) {
+      await noteRecoveryDrop(bufferId);
+    }
     if (outcome.via === "clean") {
       setStatus("Closed (clean, no prompt)");
       return;
@@ -833,6 +855,21 @@ async function closeBuffer(bufferId: string) {
   } catch (err) {
     setStatus(String(err));
   }
+}
+
+async function persistRecoveryOnWindowQuit(): Promise<number> {
+  const result = await invoke<{ preservedCount: number }>(
+    "recovery_persist_quit_cmd",
+  );
+  return result.preservedCount;
+}
+
+async function restoreRecoveryOnLaunch(): Promise<{
+  restoredCount: number;
+  buffer: BufferSnapshot | null;
+  tabs: TabInfo[];
+}> {
+  return invoke("recovery_restore_launch_cmd");
 }
 
 async function closeActive() {
@@ -1585,6 +1622,28 @@ window.addEventListener("DOMContentLoaded", () => {
     /* optional channel */
   });
 
+  // Window close: RecoveryBuffer persist only — never per-tab three-button storm.
+  void getCurrentWindow()
+    .onCloseRequested(async (event) => {
+      event.preventDefault();
+      try {
+        const outcome = await runWindowQuitRecovery({
+          persistDirty: persistRecoveryOnWindowQuit,
+        });
+        if (outcome.statusMessage) {
+          setStatus(outcome.statusMessage);
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      } catch (err) {
+        setStatus(String(err));
+        await new Promise((r) => setTimeout(r, 350));
+      }
+      await getCurrentWindow().destroy();
+    })
+    .catch(() => {
+      /* non-Tauri / capability missing — contracts cover the seam */
+    });
+
   void (async () => {
     try {
       const state = await invoke<{ enabled: boolean }>(
@@ -1594,13 +1653,39 @@ window.addEventListener("DOMContentLoaded", () => {
     } catch {
       el<HTMLInputElement>("suggestions-enabled").checked = false;
     }
-    await evoke();
+
+    let restoredCount = 0;
+    try {
+      const restored = await restoreRecoveryOnLaunch();
+      restoredCount = restored.restoredCount;
+      if (restoredCount > 0) {
+        await applyState(restored.buffer, restored.tabs);
+        clearPreviewPanel();
+        clearSuggestionsBar();
+        clearFindHits();
+      } else {
+        await evoke();
+      }
+    } catch {
+      await evoke();
+    }
+
     await refreshActionList();
     try {
       const accel = await invoke<string>("get_global_hotkey_cmd");
-      setStatus(`Ready — global hotkey ${accel}`);
+      if (restoredCount > 0) {
+        setStatus(`已恢复未保存标签 — global hotkey ${accel}`);
+      } else {
+        setStatus(`Ready — global hotkey ${accel}`);
+      }
     } catch {
-      setStatus(`Ready — global hotkey ${GLOBAL_HOTKEY_ACCELERATOR}`);
+      if (restoredCount > 0) {
+        setStatus(
+          `已恢复未保存标签 — global hotkey ${GLOBAL_HOTKEY_ACCELERATOR}`,
+        );
+      } else {
+        setStatus(`Ready — global hotkey ${GLOBAL_HOTKEY_ACCELERATOR}`);
+      }
     }
   })().catch((err) => setStatus(String(err)));
 });

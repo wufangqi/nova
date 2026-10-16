@@ -1,6 +1,6 @@
 /**
  * Injectable RecoveryBuffer store — install-local, not a user-facing draft box.
- * Desktop / host can use a profile directory; contracts inject a temp dir.
+ * Desktop host / contracts inject a profile or temp directory.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";

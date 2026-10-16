@@ -8,22 +8,22 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import {
-  closeTabWithRecovery,
-  noteBufferSaved,
-  persistDirtyOnQuit,
-  restoreOnLaunch,
-} from "../desktop/src/recovery.ts";
-import {
-  createFileRecoveryStore,
-  createMemoryRecoveryStore,
-  type RecoveryStore,
-} from "../desktop/src/recovery-store.ts";
+import { closeTabWithRecovery } from "../desktop/src/recovery.ts";
 import {
   createScriptedClosePrompter,
 } from "../desktop/src/close-prompter.ts";
 import type { TabClosePort } from "../desktop/src/tab-close.ts";
 import { EditorShell } from "../src/editor-shell.js";
+import {
+  noteBufferSaved,
+  persistDirtyOnQuit,
+  restoreOnLaunch,
+} from "../src/recovery.js";
+import {
+  createFileRecoveryStore,
+  createMemoryRecoveryStore,
+  type RecoveryStore,
+} from "../src/recovery-store.js";
 
 function portFromShell(shell: EditorShell): TabClosePort {
   return {
