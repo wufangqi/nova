@@ -76,16 +76,52 @@ button:disabled {
   cursor: not-allowed;
 }
 
-button.tab {
+.tab-item {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #bdb7aa;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
   background: #f7f5f0;
+  overflow: hidden;
+}
+
+.tab-item.active {
+  background: #fff;
+  border-bottom-color: #fff;
+}
+
+button.tab {
+  background: transparent;
   color: #1c1c1c;
-  border-color: #bdb7aa;
+  border: none;
+  border-radius: 0;
+  padding: 0.35rem 0.55rem;
 }
 
 button.tab.active {
-  background: #fff;
-  border-bottom-color: #fff;
   font-weight: 650;
+}
+
+button.tab[data-dirty="true"] {
+  font-style: italic;
+}
+
+button.tab-close {
+  background: transparent;
+  color: #4a4a4a;
+  border: none;
+  border-left: 1px solid #d5cfc3;
+  border-radius: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: 1rem;
+  line-height: 1;
+  min-width: 1.6rem;
+}
+
+button.tab-close:hover {
+  background: #e8e0d4;
+  color: #1c1c1c;
 }
 
 .tab-bar {
@@ -96,6 +132,49 @@ button.tab.active {
   background: #dcd7cd;
   border-bottom: 1px solid #bdb7aa;
   min-height: 2.2rem;
+}
+
+.close-prompt-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(40, 36, 30, 0.35);
+}
+
+.close-prompt-panel {
+  min-width: min(22rem, 92vw);
+  max-width: 28rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #8a7f6a;
+  border-radius: 4px;
+  background: #f7f5f0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.close-prompt-panel h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.05rem;
+}
+
+.close-prompt-panel p {
+  margin: 0 0 0.9rem;
+  color: #3d3d3d;
+}
+
+.close-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+button.close-prompt-secondary {
+  background: #f7f5f0;
+  color: #1c1c1c;
+  border-color: #8a7f6a;
 }
 
 .editor-chrome {

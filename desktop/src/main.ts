@@ -9,6 +9,7 @@ import {
   canOfferSaveAsAction,
   type PreviewKindForSave,
 } from "./action-ui.ts";
+import { createDomClosePrompter } from "./dom-close-prompter.ts";
 import {
   openWithPicker,
   saveAsWithPicker,
@@ -23,10 +24,15 @@ import {
 } from "./find-dialog.ts";
 import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
+import {
+  closeTabWithPrompter,
+  type TabClosePort,
+} from "./tab-close.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
 
 const pathPicker = createTauriPathPicker();
+let closePrompter = createDomClosePrompter(document.body);
 
 const fileOpsPort: FileOpsPort = {
   async getActiveTab() {
@@ -51,6 +57,52 @@ const fileOpsPort: FileOpsPort = {
     const result = await invoke<ShellTabsResult>("save_active_as_cmd", { path });
     const state = await invoke<ShellStateResult>("get_shell_state_cmd");
     await applyState(state.buffer, result.tabs);
+  },
+};
+
+const tabClosePort: TabClosePort = {
+  async getTab(bufferId) {
+    const tabs = await invoke<ShellTabsResult>("list_tabs_cmd");
+    const tab = tabs.tabs.find((t) => t.bufferId === bufferId);
+    if (!tab) return undefined;
+    return {
+      title: tab.title.replace(/\*$/, ""),
+      hasPath: tab.path != null,
+      dirty: tab.dirty,
+    };
+  },
+  async closeClean(bufferId) {
+    const result = await invoke<ShellCloseResult>("request_close_cmd", {
+      id: bufferId,
+    });
+    if (!result.close.ok) {
+      throw new Error("expected clean close without confirm");
+    }
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, result.tabs);
+    clearPreviewPanel();
+    clearSuggestionsBar();
+    clearFindHits();
+  },
+  async discard(bufferId) {
+    const confirmed = await invoke<ShellCloseResult>("confirm_close_cmd", {
+      id: bufferId,
+    });
+    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
+    await applyState(state.buffer, confirmed.tabs);
+    clearPreviewPanel();
+    clearSuggestionsBar();
+    clearFindHits();
+  },
+  async save(bufferId) {
+    if (bufferId !== activeId) {
+      await activateTab(bufferId);
+    }
+    const outcome = await saveWithPicker(pathPicker, fileOpsPort);
+    if (outcome.kind === "cancelled" || outcome.kind === "no_active") {
+      return "cancelled";
+    }
+    return "saved";
   },
 };
 
@@ -462,15 +514,36 @@ function renderTabs(tabs: TabInfo[]) {
   const bar = el<HTMLElement>("tab-bar");
   bar.replaceChildren();
   for (const tab of tabs) {
+    const wrap = document.createElement("div");
+    wrap.className = tab.active ? "tab-item active" : "tab-item";
+    wrap.dataset.bufferId = tab.bufferId;
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = tab.active ? "tab active" : "tab";
     btn.textContent = tab.title;
+    btn.title = tab.dirty ? `${tab.title} (unsaved)` : tab.title;
     btn.dataset.bufferId = tab.bufferId;
+    if (tab.dirty) {
+      btn.dataset.dirty = "true";
+    }
     btn.addEventListener("click", () => {
       void activateTab(tab.bufferId);
     });
-    bar.appendChild(btn);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "tab-close";
+    closeBtn.textContent = "×";
+    closeBtn.title = "Close";
+    closeBtn.setAttribute("aria-label", `Close ${tab.title}`);
+    closeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void closeBuffer(tab.bufferId);
+    });
+
+    wrap.append(btn, closeBtn);
+    bar.appendChild(wrap);
   }
 }
 
@@ -730,47 +803,41 @@ async function saveAsPath() {
   }
 }
 
+async function closeBuffer(bufferId: string) {
+  try {
+    const outcome = await closeTabWithPrompter(
+      closePrompter,
+      tabClosePort,
+      bufferId,
+    );
+    if (outcome.kind === "missing") {
+      setStatus("No Buffer to close");
+      return;
+    }
+    if (outcome.kind === "cancelled") {
+      setStatus("Close cancelled");
+      return;
+    }
+    if (outcome.via === "clean") {
+      setStatus("Closed (clean, no prompt)");
+      return;
+    }
+    if (outcome.via === "save") {
+      setStatus("Saved and closed");
+      return;
+    }
+    setStatus("Closed without saving");
+  } catch (err) {
+    setStatus(String(err));
+  }
+}
+
 async function closeActive() {
   if (!activeId) {
     setStatus("No Buffer to close");
     return;
   }
-  const id = activeId;
-  try {
-    const result = await invoke<ShellCloseResult>("request_close_cmd", { id });
-    if (!result.close.ok) {
-      const message =
-        result.close.reason === "confirm_discard_untitled"
-          ? "Discard unsaved untitled Buffer?"
-          : "Discard unsaved changes?";
-      if (!window.confirm(message)) {
-        await applyState(
-          (await invoke<ShellStateResult>("get_shell_state_cmd")).buffer,
-          result.tabs,
-        );
-        setStatus("Close cancelled");
-        return;
-      }
-      const confirmed = await invoke<ShellCloseResult>("confirm_close_cmd", {
-        id,
-      });
-      const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-      await applyState(state.buffer, confirmed.tabs);
-      clearPreviewPanel();
-      clearSuggestionsBar();
-      clearFindHits();
-      setStatus("Closed after confirm");
-      return;
-    }
-    const state = await invoke<ShellStateResult>("get_shell_state_cmd");
-    await applyState(state.buffer, result.tabs);
-    clearPreviewPanel();
-    clearSuggestionsBar();
-    clearFindHits();
-    setStatus(result.close.asked ? "Closed" : "Closed (clean, no prompt)");
-  } catch (err) {
-    setStatus(String(err));
-  }
+  await closeBuffer(activeId);
 }
 
 async function onHotkeyEvoke(payload: ShellBufferResult) {
@@ -1326,6 +1393,10 @@ async function selectSuggestion(suggestion: Suggestion) {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  // Re-bind after body exists so the overlay mounts under .app when preferred.
+  closePrompter = createDomClosePrompter(
+    document.querySelector(".app") ?? document.body,
+  );
   el<HTMLButtonElement>("new-tab").addEventListener("click", () => {
     void evoke().catch((err) => setStatus(String(err)));
   });
