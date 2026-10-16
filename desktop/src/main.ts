@@ -23,6 +23,12 @@ import {
 } from "./find-dialog.ts";
 import { pathInputValueForActive } from "./path-toolbar.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
+import {
+  SHELL_FILE_MENU_ITEMS,
+  resolveShellShortcut,
+  runShellAction,
+  type ShellChromeHandlers,
+} from "./shell-chrome.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
 
@@ -1325,22 +1331,76 @@ async function selectSuggestion(suggestion: Suggestion) {
   }
 }
 
+function openFindChrome(): void {
+  findDialog.setFields(readFindFieldsFromDom());
+  findDialog.focusPattern();
+}
+
+function closeFileMenu(): void {
+  const menu = document.getElementById("file-menu");
+  if (menu instanceof HTMLDetailsElement) menu.open = false;
+}
+
+function mountFileMenu(handlers: ShellChromeHandlers): void {
+  const list = el<HTMLUListElement>("file-menu-list");
+  list.replaceChildren();
+  for (const item of SHELL_FILE_MENU_ITEMS) {
+    const li = document.createElement("li");
+    li.setAttribute("role", "none");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("role", "menuitem");
+    btn.dataset.shellAction = item.id;
+    const label = document.createElement("span");
+    label.textContent = item.label;
+    const accel = document.createElement("span");
+    accel.className = "accel";
+    accel.textContent = item.accelerator;
+    btn.append(label, accel);
+    btn.addEventListener("click", () => {
+      closeFileMenu();
+      void Promise.resolve(runShellAction(item.id, handlers)).catch((err) =>
+        setStatus(String(err)),
+      );
+    });
+    li.append(btn);
+    list.append(li);
+  }
+}
+
 window.addEventListener("DOMContentLoaded", () => {
-  el<HTMLButtonElement>("new-tab").addEventListener("click", () => {
-    void evoke().catch((err) => setStatus(String(err)));
-  });
-  el<HTMLButtonElement>("run-demo").addEventListener("click", () => {
-    void runVisualDemo().catch((err) => setStatus(String(err)));
-  });
-  el<HTMLButtonElement>("open-path").addEventListener("click", () => {
-    void openPath();
-  });
-  el<HTMLButtonElement>("save").addEventListener("click", () => {
-    void save();
-  });
-  el<HTMLButtonElement>("save-as").addEventListener("click", () => {
-    void saveAsPath();
-  });
+  const shellHandlers: ShellChromeHandlers = {
+    new: () => evoke().catch((err) => setStatus(String(err))),
+    open: () => openPath(),
+    save: () => save(),
+    save_as: () => saveAsPath(),
+    find: () => openFindChrome(),
+    demo: () => runVisualDemo().catch((err) => setStatus(String(err))),
+  };
+
+  mountFileMenu(shellHandlers);
+
+  for (const node of document.querySelectorAll<HTMLElement>(
+    ".toolbar [data-shell-action]",
+  )) {
+    const action = node.dataset.shellAction;
+    if (
+      action !== "new" &&
+      action !== "open" &&
+      action !== "save" &&
+      action !== "save_as" &&
+      action !== "find" &&
+      action !== "demo"
+    ) {
+      continue;
+    }
+    node.addEventListener("click", () => {
+      void Promise.resolve(runShellAction(action, shellHandlers)).catch((err) =>
+        setStatus(String(err)),
+      );
+    });
+  }
+
   el<HTMLButtonElement>("close-tab").addEventListener("click", () => {
     void closeActive();
   });
@@ -1382,11 +1442,14 @@ window.addEventListener("DOMContentLoaded", () => {
     if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "g") {
       ev.preventDefault();
       el<HTMLInputElement>("goto-line").focus();
+      return;
     }
-    if (ev.ctrlKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === "f") {
+    const shellAction = resolveShellShortcut(ev);
+    if (shellAction) {
       ev.preventDefault();
-      findDialog.setFields(readFindFieldsFromDom());
-      findDialog.focusPattern();
+      void Promise.resolve(runShellAction(shellAction, shellHandlers)).catch(
+        (err) => setStatus(String(err)),
+      );
     }
   });
 
@@ -1421,10 +1484,6 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  el<HTMLButtonElement>("find-open").addEventListener("click", () => {
-    findDialog.setFields(readFindFieldsFromDom());
-    findDialog.focusPattern();
-  });
   el<HTMLButtonElement>("find-close").addEventListener("click", () => {
     findDialog.closeDialog();
   });
