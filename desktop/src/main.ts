@@ -34,6 +34,18 @@ import {
   type ShellChromeHandlers,
 } from "./shell-chrome.ts";
 import { createTauriPathPicker } from "./tauri-path-picker.ts";
+import {
+  TITLE_DRAG_THRESHOLD_PX,
+  formatTitle,
+  handleTitleClick,
+  onTitleDoubleClick,
+  onTitleDragThreshold,
+  syncWindowTitle,
+  titleChromeFeedback,
+  titleChromeStateFromTab,
+  type TitleChromeState,
+  type TitleChromeWindowPort,
+} from "./title-chrome.ts";
 import { VirtualEditor } from "./virtual-editor.ts";
 import { runWindowQuitRecovery } from "./window-quit.ts";
 
@@ -553,6 +565,104 @@ function renderTabs(tabs: TabInfo[]) {
   }
 }
 
+let currentTitleState: TitleChromeState = { path: null, dirty: false };
+let titleFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+let titleClickSuppressUntil = 0;
+
+function titleWindowPort(): TitleChromeWindowPort {
+  const win = getCurrentWindow();
+  return {
+    startDragging: () => win.startDragging(),
+    toggleMaximize: () => win.toggleMaximize(),
+  };
+}
+
+function showTitleFeedback(text: string, kind: "copied" | "no_path") {
+  const chip = document.getElementById("title-chrome-feedback");
+  if (!chip) return;
+  chip.textContent = text;
+  chip.hidden = false;
+  chip.dataset.kind = kind;
+  if (titleFeedbackTimer) clearTimeout(titleFeedbackTimer);
+  titleFeedbackTimer = setTimeout(() => {
+    chip.hidden = true;
+    chip.textContent = "";
+    delete chip.dataset.kind;
+  }, 1500);
+}
+
+async function syncTitleChrome(active: TabInfo | undefined) {
+  currentTitleState = titleChromeStateFromTab(active);
+  const title = formatTitle(currentTitleState);
+  const label = document.getElementById("title-chrome-label");
+  if (label) label.textContent = title;
+  try {
+    await syncWindowTitle(currentTitleState, {
+      setTitle: (t) => getCurrentWindow().setTitle(t),
+    });
+  } catch {
+    /* non-Tauri / capability missing — contract covers the seam */
+  }
+}
+
+function mountTitleChrome() {
+  const region = document.getElementById("title-chrome");
+  if (!region) return;
+
+  let press: { x: number; y: number; dragging: boolean } | null = null;
+
+  region.addEventListener("dblclick", (ev) => {
+    ev.preventDefault();
+    titleClickSuppressUntil = Date.now() + 400;
+    press = null;
+    void onTitleDoubleClick(titleWindowPort()).catch(() => {
+      /* best-effort outside Tauri */
+    });
+  });
+
+  region.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    press = { x: ev.clientX, y: ev.clientY, dragging: false };
+    try {
+      region.setPointerCapture(ev.pointerId);
+    } catch {
+      /* capture optional */
+    }
+  });
+
+  region.addEventListener("pointermove", (ev) => {
+    if (!press || press.dragging) return;
+    const dx = ev.clientX - press.x;
+    const dy = ev.clientY - press.y;
+    if (Math.hypot(dx, dy) < TITLE_DRAG_THRESHOLD_PX) return;
+    press.dragging = true;
+    void onTitleDragThreshold(titleWindowPort()).catch(() => {
+      /* best-effort outside Tauri */
+    });
+  });
+
+  region.addEventListener("pointerup", () => {
+    if (!press) return;
+    const wasDrag = press.dragging;
+    press = null;
+    if (wasDrag || Date.now() < titleClickSuppressUntil) return;
+    void handleTitleClick(currentTitleState, {
+      writeClipboard: (text) => navigator.clipboard.writeText(text),
+    })
+      .then((result) => {
+        showTitleFeedback(
+          titleChromeFeedback(result),
+          result.ok ? "copied" : "no_path",
+        );
+      })
+      .catch((err) => setStatus(String(err)));
+  });
+
+  region.addEventListener("pointercancel", () => {
+    press = null;
+  });
+}
+
 async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
   const pathInput = el<HTMLInputElement>("path-input");
   activeId = buffer?.id ?? null;
@@ -561,6 +671,7 @@ async function applyState(buffer: BufferSnapshot | null, tabs: TabInfo[]) {
   const active = tabs.find((t) => t.active);
   // Always sync — untitled must clear so Save cannot reuse another tab's Path.
   pathInput.value = pathInputValueForActive(active);
+  await syncTitleChrome(active);
 }
 
 function editorSelection():
@@ -1498,6 +1609,7 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   mountFileMenu(shellHandlers);
+  mountTitleChrome();
 
   for (const node of document.querySelectorAll<HTMLElement>(
     ".toolbar [data-shell-action]",
@@ -1541,6 +1653,7 @@ window.addEventListener("DOMContentLoaded", () => {
         });
         renderTabs(result.tabs);
         activeId = result.buffer.id;
+        await syncTitleChrome(result.tabs.find((t) => t.active));
         return { revision: result.buffer.revision };
       },
     },
