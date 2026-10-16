@@ -38,8 +38,10 @@ describe("Buffer Encoding/EOL + Path round-trip", () => {
 
     const shell = new EditorShell();
     const opened = await shell.openPath(path);
-    // Non-UTF-8 still decodes in JS; snapshot may carry text from createBuffer path.
-    const body = shell.getActiveBuffer().text ?? opened.text ?? "";
+    // Non-UTF-8 seeds core via decode, but snapshot still omits text.
+    assert.equal(opened.text, undefined);
+    const intent = shell.intentService();
+    const body = intent.slice(opened.id, 0, intent.len(opened.id));
     assert.equal(body.replace(/\r\n/g, "\n"), "你好世界\n第二行");
     assert.equal(opened.encoding, "gbk");
     assert.equal(opened.eol, "crlf");
@@ -59,7 +61,12 @@ describe("Buffer Encoding/EOL + Path round-trip", () => {
 
     const shell = new EditorShell();
     const opened = await shell.openPath(path);
-    assert.equal(shell.getActiveBuffer().text, "hello\n");
+    assert.equal(opened.text, undefined);
+    const intent = shell.intentService();
+    assert.equal(
+      intent.slice(opened.id, 0, intent.len(opened.id)),
+      "hello\n",
+    );
     assert.equal(opened.encoding, "utf-8");
     assert.equal(opened.bom, true);
     assert.equal(opened.eol, "lf");

@@ -280,10 +280,11 @@ export class IntentIpcHost {
           };
         case "activate_tab": {
           this.shell.activateTab(request.params.id);
+          // Meta snapshot only — never materialize full text then strip it.
           return {
             ok: true,
             result: {
-              buffer: toIpcSnapshot(this.shell.getActiveBuffer(), false),
+              buffer: this.service.getBuffer(request.params.id),
               tabs: this.shell.listTabs(),
             } satisfies ShellBufferResult,
           };

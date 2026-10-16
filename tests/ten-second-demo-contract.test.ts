@@ -63,7 +63,11 @@ describe("offline editor ≠ offline AI (ADR-0003)", () => {
     const shell = new EditorShell(svc);
     shell.handleHotkeyEvoke();
     shell.editActive("edit without model");
-    assert.equal(shell.getActiveBuffer().text, "edit without model");
+    assert.equal(shell.getActiveBuffer().text, undefined);
+    assert.equal(
+      svc.slice(shell.activeBufferId!, 0, svc.len(shell.activeBufferId!)),
+      "edit without model",
+    );
 
     const find = new FindBar(svc);
     const hits = find.find({

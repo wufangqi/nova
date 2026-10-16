@@ -4,13 +4,6 @@ import { decodeBytes, encodeText } from "./encoding.js";
 import { IntentService } from "./intent-service.js";
 import type { BufferId, BufferSnapshot } from "./types.js";
 
-/**
- * Desktop textarea path still needs the whole body in JS until callers move to
- * slice/lineWindow. Call sites here opt in explicitly — never rely on
- * IntentService defaulting to full text.
- */
-const SHELL_FULL_TEXT = { includeText: true } as const;
-
 export interface TabInfo {
   bufferId: BufferId;
   title: string;
@@ -42,7 +35,8 @@ interface TabState {
  * Notepad-like shell: open Buffers as tabs, hotkey evoke, Path open/save, close prompts.
  * No Workspace / Project / Session noun — just a list of open Buffers.
  * Path IO respects Buffer Encoding / EOL / BOM metadata (WUF-73).
- * UTF-8 without BOM opens via Rust core (no JS body); other encodings decode in JS.
+ * UTF-8 without BOM opens via Rust core (no JS body); other encodings decode in JS
+ * only to seed the core, then snapshots omit text (WUF-99).
  */
 export class EditorShell {
   private readonly intent: IntentService;
@@ -65,7 +59,7 @@ export class EditorShell {
 
   /** Global hotkey handler: always spawn a new untitled Buffer; keep existing tabs. */
   evokeNewUntitled(): BufferSnapshot {
-    const buf = this.intent.createBuffer("", {}, SHELL_FULL_TEXT);
+    const buf = this.intent.createBuffer("");
     this.registerTab(buf, null);
     return buf;
   }
@@ -84,9 +78,10 @@ export class EditorShell {
     return this.tabInfo(bufferId);
   }
 
+  /** Meta snapshot only — callers that need body use slice / lineWindow / len. */
   getActiveBuffer(): BufferSnapshot {
     if (!this.activeId) throw new Error("no active Buffer");
-    return this.intent.getBuffer(this.activeId, SHELL_FULL_TEXT);
+    return this.intent.getBuffer(this.activeId);
   }
 
   activateTab(bufferId: BufferId): void {
@@ -96,7 +91,7 @@ export class EditorShell {
 
   editActive(text: string): BufferSnapshot {
     if (!this.activeId) throw new Error("no active Buffer");
-    return this.intent.editBuffer(this.activeId, text, SHELL_FULL_TEXT);
+    return this.intent.editBuffer(this.activeId, text);
   }
 
   /** Span edit on the active Buffer (virtual-scroll / large-file typing path). */
@@ -111,12 +106,13 @@ export class EditorShell {
 
   editBuffer(bufferId: BufferId, text: string): BufferSnapshot {
     this.requireTab(bufferId);
-    return this.intent.editBuffer(bufferId, text, SHELL_FULL_TEXT);
+    return this.intent.editBuffer(bufferId, text);
   }
 
   /**
    * Open a Path. UTF-8 without BOM → Rust core (JS never holds the body).
-   * BOM / non-UTF-8 → decode in JS then createBuffer (Encoding contract path).
+   * BOM / non-UTF-8 → decode in JS then createBuffer (Encoding contract path);
+   * returned snapshot still omits text.
    */
   async openPath(path: string): Promise<BufferSnapshot> {
     if (await shouldOpenViaCore(path)) {
@@ -131,15 +127,11 @@ export class EditorShell {
 
     const bytes = await readFile(path);
     const decoded = decodeBytes(bytes);
-    const buf = this.intent.createBuffer(
-      decoded.text,
-      {
-        encoding: decoded.encoding,
-        eol: decoded.eol,
-        bom: decoded.bom,
-      },
-      SHELL_FULL_TEXT,
-    );
+    const buf = this.intent.createBuffer(decoded.text, {
+      encoding: decoded.encoding,
+      eol: decoded.eol,
+      bom: decoded.bom,
+    });
     this.registerTab(buf, path);
     return buf;
   }
@@ -222,9 +214,12 @@ export class EditorShell {
       this.intent.savePath(bufferId, path);
       return;
     }
-    const buf = this.intent.getBuffer(bufferId, SHELL_FULL_TEXT);
-    const bytes = encodeText(buf.text ?? "", buf.encoding, buf.eol, {
-      bom: buf.bom,
+    // Non-UTF-8 / EOL / BOM Path write needs bytes — pull via slice, never a
+    // default full-text snapshot convenience path.
+    const n = this.intent.len(bufferId);
+    const text = n === 0 ? "" : this.intent.slice(bufferId, 0, n);
+    const bytes = encodeText(text, meta.encoding, meta.eol, {
+      bom: meta.bom,
     });
     await writeFile(path, bytes);
   }

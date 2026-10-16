@@ -34,7 +34,7 @@ describe("global hotkey evoke port", () => {
     const created = onGlobalHotkeyPressed(shell);
 
     assert.notEqual(created.id, prior.id);
-    assert.equal(created.text, "");
+    assert.equal(created.text, undefined);
     assert.equal(shell.activeBufferId, created.id);
     assert.equal(shell.listTabs().length, 2);
     assert.ok(shell.listTabs().some((t) => t.bufferId === prior.id));
@@ -44,7 +44,12 @@ describe("global hotkey evoke port", () => {
     );
 
     shell.activateTab(prior.id);
-    assert.equal(shell.getActiveBuffer().text, "keep me");
+    assert.equal(shell.getActiveBuffer().text, undefined);
+    const intent = shell.intentService();
+    assert.equal(
+      intent.slice(prior.id, 0, intent.len(prior.id)),
+      "keep me",
+    );
   });
 });
 

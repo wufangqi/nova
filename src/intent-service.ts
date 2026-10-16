@@ -37,6 +37,7 @@ import type {
   BufferId,
   BufferSnapshot,
   BufferSnapshotOptions,
+  BufferTextFingerprint,
   Cost,
   Eol,
   ExplanationAnchor,
@@ -56,6 +57,8 @@ import type {
 } from "./types.js";
 
 const DEFAULT_VISIBLE_SAMPLE_CHARS = 4096;
+/** Bounded head/tail samples for Accept Provenance — never whole Buffer. */
+const FINGERPRINT_SAMPLE_CHARS = 64;
 const MODEL_UNAVAILABLE_GUIDANCE =
   "No local model is installed. Install a local model to run AI Intents, or enable a cloud path. Buffer editing and FindBar still work offline.";
 const VALIDATION_FAILED_GUIDANCE =
@@ -85,6 +88,22 @@ interface UndoGroupRecord {
 function bufferText(id: BufferId): string {
   const n = coreLen(id);
   return n === 0 ? "" : coreSlice(id, 0, n);
+}
+
+/** Offset/length/sample fingerprint — no whole-Buffer copy into TS heap. */
+function textFingerprint(id: BufferId): BufferTextFingerprint {
+  const n = coreLen(id);
+  const headLen = Math.min(FINGERPRINT_SAMPLE_CHARS, n);
+  const tailLen = Math.min(FINGERPRINT_SAMPLE_CHARS, n);
+  const head = headLen === 0 ? "" : coreSlice(id, 0, headLen);
+  const tailStart = Math.max(0, n - tailLen);
+  const tail = tailLen === 0 ? "" : coreSlice(id, tailStart, n);
+  return {
+    len: n,
+    revision: coreRev(id),
+    head,
+    tail,
+  };
 }
 
 /**
@@ -578,8 +597,8 @@ export class IntentService {
       nextBom = buf.bom;
     }
 
-    const textBefore = bufferText(bufferId);
-    const revisionBefore = coreRev(bufferId);
+    const before = textFingerprint(bufferId);
+    const revisionBefore = before.revision;
     const encodingBefore = buf.encoding;
     const eolBefore = buf.eol;
     const bomBefore = buf.bom;
@@ -606,7 +625,7 @@ export class IntentService {
     buf.eol = nextEol;
     buf.bom = nextBom;
 
-    const textAfter = bufferText(bufferId);
+    const after = textFingerprint(bufferId);
     const undoGroupId = applied.undoGroupId;
     this.undoGroups.set(undoGroupId, {
       id: undoGroupId,
@@ -625,7 +644,7 @@ export class IntentService {
       undoGroupId,
       committedBy: "user",
       bufferRevisionAfter: applied.rev,
-      textAfter,
+      after,
     };
     this.mainHistory.get(bufferId)!.push(mainEntry);
 
@@ -636,8 +655,8 @@ export class IntentService {
         originalProvenance: patch.provenance,
         intentId: patch.intentId,
         bufferId,
-        textBefore,
-        textAfter,
+        before,
+        after,
       });
     }
 

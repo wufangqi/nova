@@ -162,5 +162,11 @@ describe("dual-track Provenance", () => {
     assert.equal(entry.originalProvenance.source, "ai");
     assert.equal(entry.intentId, "intent-1");
     assert.equal(entry.committedBy, "user");
+    // Fingerprints — never whole-Buffer copies in the TS heap.
+    assert.equal(entry.before.len, "plain text".length);
+    assert.equal(entry.after.len, "Plain text".length);
+    assert.ok(entry.before.head.length <= 64);
+    assert.ok(entry.after.head.length <= 64);
+    assert.equal(last.after.len, "Plain text".length);
   });
 });
