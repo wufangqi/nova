@@ -10,6 +10,8 @@ import {
 } from "./status-metrics.ts";
 import {
   editorContentWidthPx,
+  editorSurfaceMinHeightPx,
+  editorSurfaceVerticalPaddingPx,
   gutterHorizontalPinTranslateX,
 } from "./editor-layout.ts";
 import {
@@ -89,6 +91,8 @@ export class VirtualEditor {
   private composing = false;
   private syncToken = 0;
 
+  private readonly viewportResizeObserver: ResizeObserver;
+
   constructor(
     private readonly viewport: HTMLElement,
     private readonly spacer: HTMLElement,
@@ -111,6 +115,11 @@ export class VirtualEditor {
     this.textarea.addEventListener("input", () => {
       if (!this.composing) void this.flushEdit();
     });
+    this.viewportResizeObserver = new ResizeObserver(() => {
+      this.refreshSurfaceHeight();
+      this.refreshContentWidth();
+    });
+    this.viewportResizeObserver.observe(this.viewport);
   }
 
   get activeBufferId(): string | null {
@@ -213,6 +222,7 @@ export class VirtualEditor {
       this.windowEl.style.top = "0px";
       this.applyingRemote = false;
       this.setEnabled(false);
+      this.refreshSurfaceHeight();
       this.refreshContentWidth();
       this.refreshGutter();
       return;
@@ -331,6 +341,38 @@ export class VirtualEditor {
     this.pinGutterHorizontally();
   }
 
+  /**
+   * WUF-119: keep textarea + gutter hit boxes at least one viewport tall
+   * (CSS min-height:100% is fallback only). Also covers disabled / empty bind.
+   */
+  private refreshSurfaceHeight() {
+    const pad = this.surfaceVerticalPaddingPx();
+    const mounted = mountedLineCountFromText(this.localText);
+    const minPx = editorSurfaceMinHeightPx(
+      this.viewport.clientHeight,
+      mounted,
+      LINE_HEIGHT_PX,
+      pad,
+    );
+    const minHeight = `${minPx}px`;
+    this.windowEl.style.minHeight = minHeight;
+    this.textarea.style.minHeight = minHeight;
+    if (this.gutterEl) {
+      this.gutterEl.style.minHeight = minHeight;
+    }
+  }
+
+  /** Prefer live computed padding; fall back to stylesheet rem rule. */
+  private surfaceVerticalPaddingPx(): number {
+    if (typeof getComputedStyle === "function") {
+      const style = getComputedStyle(this.textarea);
+      const top = Number.parseFloat(style.paddingTop) || 0;
+      const bottom = Number.parseFloat(style.paddingBottom) || 0;
+      if (top + bottom > 0) return top + bottom;
+    }
+    return editorSurfaceVerticalPaddingPx();
+  }
+
   /** Keep gutter at the viewport left while content scrolls horizontally. */
   private pinGutterHorizontally() {
     if (!this.gutterEl) return;
@@ -379,6 +421,7 @@ export class VirtualEditor {
       this.textarea.setSelectionRange(selStart, selEnd);
     }
     this.applyingRemote = false;
+    this.refreshSurfaceHeight();
     this.refreshContentWidth();
     this.refreshGutter();
   }
@@ -420,6 +463,7 @@ export class VirtualEditor {
       this.applyingRemote = true;
       this.textarea.setSelectionRange(caret, caret);
       this.applyingRemote = false;
+      this.refreshSurfaceHeight();
       this.refreshContentWidth();
       this.refreshGutter();
     } catch (err) {

@@ -1,5 +1,5 @@
 /**
- * WUF-111 / WUF-118 — editor viewport layout policy at the layout seam.
+ * WUF-111 / WUF-118 / WUF-119 — editor viewport layout policy at the layout seam.
  *
  * WUF-111 half-width root cause (CSS width chain, not soft-wrap):
  * `.editor-window` is absolutely positioned inside `.editor-viewport`. If that
@@ -16,6 +16,12 @@
  *   horizontally (`min-width: 100%`, width may exceed the viewport).
  * - Line gutter stays pinned to the viewport left under horizontal scroll
  *   (translateX = scrollLeft); vertical sync remains VirtualEditor scrollTop.
+ *
+ * WUF-119 extends the same seam again:
+ * - Editable surface (textarea + gutter) geometry ≥ viewport `clientHeight`
+ *   so visible white area is clickable and gutter paint fills the column.
+ * - CSS `min-height: 100%` is fallback only; VirtualEditor applies an explicit
+ *   px floor from {@link editorSurfaceMinHeightPx} on bind / sync / resize.
  */
 
 /** Soft wrap stays off after root-cause analysis (see module doc). */
@@ -70,6 +76,8 @@ export const EDITOR_VIEWPORT_WIDTH_CHAIN = {
     selector: ".line-gutter",
     position: "absolute",
     left: "0",
+    /** CSS fallback; VirtualEditor also sets an explicit px floor (WUF-119). */
+    minHeight: "100%",
   },
   app: {
     selector: ".app",
@@ -200,6 +208,141 @@ export function editorContentWidthPx(
   return Math.max(vp, line);
 }
 
+/**
+ * Top+bottom padding on `.editor` / `.line-gutter` (~0.85rem each side).
+ * Used when converting rem padding into the surface min-height formula.
+ */
+export const EDITOR_SURFACE_PAD_TOP_BOTTOM_REM = 0.85 as const;
+
+/** `:root` font-size in `styles.css` — rem → px for surface padding. */
+export const EDITOR_ROOT_FONT_SIZE_PX = 14 as const;
+
+/** Vertical padding px matching stylesheet (~0.85rem × 2 at root 14px). */
+export function editorSurfaceVerticalPaddingPx(
+  rootFontSizePx: number = EDITOR_ROOT_FONT_SIZE_PX,
+): number {
+  const root =
+    Number.isFinite(rootFontSizePx) && rootFontSizePx > 0
+      ? rootFontSizePx
+      : EDITOR_ROOT_FONT_SIZE_PX;
+  return EDITOR_SURFACE_PAD_TOP_BOTTOM_REM * 2 * root;
+}
+
+/**
+ * Editable surface min-height: at least one viewport tall, or tall enough for
+ * the mounted virtual window (line rows + vertical padding).
+ */
+export function editorSurfaceMinHeightPx(
+  viewportClientHeightPx: number,
+  mountedLineCount: number,
+  lineHeightPx: number,
+  verticalPaddingPx: number,
+): number {
+  const vp = Number.isFinite(viewportClientHeightPx)
+    ? Math.max(0, viewportClientHeightPx)
+    : 0;
+  const lines = Number.isFinite(mountedLineCount)
+    ? Math.max(0, mountedLineCount)
+    : 0;
+  const lh =
+    Number.isFinite(lineHeightPx) && lineHeightPx > 0 ? lineHeightPx : 0;
+  const pad = Number.isFinite(verticalPaddingPx)
+    ? Math.max(0, verticalPaddingPx)
+    : 0;
+  return Math.max(vp, lines * lh + pad);
+}
+
+/** WUF-119 geometry probe — Node-runnable, no screenshots. */
+export type EditorSurfaceFillProbe = {
+  viewportClientHeightPx: number;
+  /** Textarea or editor-window hit-box height. */
+  surfaceHeightPx: number;
+  gutterHeightPx: number;
+  /** Click in viewport client coords (typically mid-lower white area). */
+  clickInViewport: { x: number; y: number };
+  /** Whether that click lands on the textarea hit box. */
+  hitTargetIsTextarea: boolean;
+};
+
+/** Surface (textarea / window) height covers the viewport client height. */
+export function surfaceFillsViewportClientHeight(
+  probe: Pick<
+    EditorSurfaceFillProbe,
+    "viewportClientHeightPx" | "surfaceHeightPx"
+  >,
+  tolerancePx = 1,
+): boolean {
+  const { viewportClientHeightPx, surfaceHeightPx } = probe;
+  if (viewportClientHeightPx <= 0 || surfaceHeightPx <= 0) return false;
+  return surfaceHeightPx + tolerancePx >= viewportClientHeightPx;
+}
+
+/** Gutter column height covers the viewport client height. */
+export function gutterFillsViewportClientHeight(
+  probe: Pick<
+    EditorSurfaceFillProbe,
+    "viewportClientHeightPx" | "gutterHeightPx"
+  >,
+  tolerancePx = 1,
+): boolean {
+  const { viewportClientHeightPx, gutterHeightPx } = probe;
+  if (viewportClientHeightPx <= 0 || gutterHeightPx <= 0) return false;
+  return gutterHeightPx + tolerancePx >= viewportClientHeightPx;
+}
+
+/**
+ * Pure hit test: click is inside a filled surface rect anchored at viewport
+ * origin (0,0) with the given size — models “white area is the textarea”.
+ */
+export function clickHitsFilledSurface(
+  click: { x: number; y: number },
+  surface: { widthPx: number; heightPx: number },
+): boolean {
+  if (surface.widthPx <= 0 || surface.heightPx <= 0) return false;
+  return (
+    click.x >= 0 &&
+    click.y >= 0 &&
+    click.x < surface.widthPx &&
+    click.y < surface.heightPx
+  );
+}
+
+/**
+ * Build a fill probe from measured geometry. Derives `hitTargetIsTextarea`
+ * from whether the click sits inside the surface hit box (Node-safe).
+ */
+export function probeEditorSurfaceFill(input: {
+  viewportClientHeightPx: number;
+  viewportClientWidthPx: number;
+  surfaceHeightPx: number;
+  gutterHeightPx: number;
+  clickInViewport: { x: number; y: number };
+}): EditorSurfaceFillProbe {
+  const hitTargetIsTextarea = clickHitsFilledSurface(input.clickInViewport, {
+    widthPx: input.viewportClientWidthPx,
+    heightPx: input.surfaceHeightPx,
+  });
+  return {
+    viewportClientHeightPx: input.viewportClientHeightPx,
+    surfaceHeightPx: input.surfaceHeightPx,
+    gutterHeightPx: input.gutterHeightPx,
+    clickInViewport: input.clickInViewport,
+    hitTargetIsTextarea,
+  };
+}
+
+/** All WUF-119 surface-fill checks hold for the probe. */
+export function editorSurfaceFillHolds(
+  probe: EditorSurfaceFillProbe,
+  tolerancePx = 1,
+): boolean {
+  return (
+    surfaceFillsViewportClientHeight(probe, tolerancePx) &&
+    gutterFillsViewportClientHeight(probe, tolerancePx) &&
+    probe.hitTargetIsTextarea
+  );
+}
+
 type Decl = Record<string, string>;
 
 /**
@@ -291,6 +434,9 @@ export function assertEditorViewportScrollCss(css: string): void {
   }
   if (gutter["left"] !== EDITOR_VIEWPORT_WIDTH_CHAIN.gutter.left) {
     throw new Error(".line-gutter left must be 0 (pin base)");
+  }
+  if (gutter["min-height"] !== EDITOR_VIEWPORT_WIDTH_CHAIN.gutter.minHeight) {
+    throw new Error(".line-gutter min-height must be 100% (surface-fill fallback)");
   }
   if (app["height"] !== EDITOR_VIEWPORT_WIDTH_CHAIN.app.height) {
     throw new Error(
