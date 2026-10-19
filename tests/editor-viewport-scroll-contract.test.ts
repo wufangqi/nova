@@ -1,8 +1,8 @@
 /**
- * WUF-118 contract: editor viewport full-height fill + dual-axis scroll + gutter pin.
+ * WUF-118 / WUF-119 contract: editor viewport scroll + editable surface fill.
  *
  * Seam: editor-layout (desktop/src/editor-layout.ts) + desktop styles/markup.
- * Asserts layout probes and CSS tokens without pixel skin screenshots.
+ * Merges WUF-118 CSS string locks with WUF-119 geometry probes (no screenshots).
  */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -16,11 +16,18 @@ import {
   assertEditorTextareaWrapAttr,
   assertEditorViewportScrollCss,
   editorContentWidthPx,
+  editorSurfaceFillHolds,
+  editorSurfaceMinHeightPx,
+  editorSurfaceVerticalPaddingPx,
+  gutterFillsViewportClientHeight,
   gutterHorizontalPinTranslateX,
   gutterPinnedLeft,
   longLineHorizontallyReachable,
+  probeEditorSurfaceFill,
+  surfaceFillsViewportClientHeight,
   viewportFillsAllocatedHeight,
 } from "../desktop/src/editor-layout.ts";
+import { LINE_HEIGHT_PX } from "../desktop/src/virtual-editor.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -84,6 +91,90 @@ describe("editor viewport scroll policy", () => {
       gutterPinnedLeft({ gutterOffsetLeftPx: 40 }),
       false,
     );
+  });
+});
+
+describe("editable surface fill policy (WUF-119)", () => {
+  const pad = editorSurfaceVerticalPaddingPx();
+
+  it("min-height is at least the viewport, even with few mounted lines", () => {
+    assert.equal(
+      editorSurfaceMinHeightPx(480, 3, LINE_HEIGHT_PX, pad),
+      480,
+    );
+    assert.equal(
+      editorSurfaceMinHeightPx(480, 0, LINE_HEIGHT_PX, pad),
+      480,
+    );
+  });
+
+  it("min-height grows with mounted lines + vertical padding when taller than viewport", () => {
+    const lines = 40;
+    const expected = lines * LINE_HEIGHT_PX + pad;
+    assert.ok(expected > 400);
+    assert.equal(
+      editorSurfaceMinHeightPx(400, lines, LINE_HEIGHT_PX, pad),
+      expected,
+    );
+  });
+
+  it("surface and gutter heights cover viewport; mid-lower click hits textarea", () => {
+    const viewportClientHeightPx = 500;
+    const viewportClientWidthPx = 800;
+    const surfaceHeightPx = editorSurfaceMinHeightPx(
+      viewportClientHeightPx,
+      5,
+      LINE_HEIGHT_PX,
+      pad,
+    );
+    const clickInViewport = {
+      x: viewportClientWidthPx / 2,
+      y: viewportClientHeightPx * 0.75,
+    };
+    const probe = probeEditorSurfaceFill({
+      viewportClientHeightPx,
+      viewportClientWidthPx,
+      surfaceHeightPx,
+      gutterHeightPx: surfaceHeightPx,
+      clickInViewport,
+    });
+    assert.equal(surfaceFillsViewportClientHeight(probe), true);
+    assert.equal(gutterFillsViewportClientHeight(probe), true);
+    assert.equal(probe.hitTargetIsTextarea, true);
+    assert.equal(editorSurfaceFillHolds(probe), true);
+  });
+
+  it("short surface fails fill and miss-hits the mid-lower click", () => {
+    const probe = probeEditorSurfaceFill({
+      viewportClientHeightPx: 500,
+      viewportClientWidthPx: 800,
+      surfaceHeightPx: 80,
+      gutterHeightPx: 80,
+      clickInViewport: { x: 400, y: 375 },
+    });
+    assert.equal(surfaceFillsViewportClientHeight(probe), false);
+    assert.equal(gutterFillsViewportClientHeight(probe), false);
+    assert.equal(probe.hitTargetIsTextarea, false);
+    assert.equal(editorSurfaceFillHolds(probe), false);
+  });
+
+  it("fill still holds after a non-zero scrollTop (visible surface ≥ clientHeight)", () => {
+    // scrollTop does not shrink the required surface floor — same min-height.
+    const viewportClientHeightPx = 420;
+    const surfaceHeightPx = editorSurfaceMinHeightPx(
+      viewportClientHeightPx,
+      12,
+      LINE_HEIGHT_PX,
+      pad,
+    );
+    const probe = probeEditorSurfaceFill({
+      viewportClientHeightPx,
+      viewportClientWidthPx: 720,
+      surfaceHeightPx,
+      gutterHeightPx: surfaceHeightPx,
+      clickInViewport: { x: 360, y: viewportClientHeightPx * 0.8 },
+    });
+    assert.equal(editorSurfaceFillHolds(probe), true);
   });
 });
 

@@ -22,7 +22,9 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto auto auto auto;
+  /* minmax(0, 1fr) lets the editor band shrink vs content min-size; 16rem
+     floor stays on `.editor-viewport` itself. */
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto auto auto;
   /* Definite height so the middle 1fr editor track fills the window. */
   height: 100vh;
   min-height: 100vh;
