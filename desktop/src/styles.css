@@ -513,6 +513,35 @@ button.close-prompt-secondary {
   background: #b8beb7;
 }
 
+.find-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 0.35rem;
+  background: #cfd4ce;
+  border-bottom: 1px solid #bdb7aa;
+}
+
+.find-tab {
+  padding: 0.3rem 0.75rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+  color: #1c1c1c;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.find-tab[aria-selected="true"] {
+  background: #e2e6e0;
+  border-color: #bdb7aa;
+  margin-bottom: -1px;
+}
+
+.find-tab:hover:not([aria-selected="true"]) {
+  background: #b8beb7;
+}
+
 .find-panel {
   display: flex;
   flex-direction: column;
@@ -520,6 +549,31 @@ button.close-prompt-secondary {
   padding: 0.55rem 0.75rem;
   background: transparent;
   border-top: none;
+}
+
+.find-panel[hidden] {
+  display: none !important;
+}
+
+.find-intent-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.find-intent-col {
+  flex: 1 1 12rem;
+}
+
+.find-intent-hit-count {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #3a4038;
+}
+
+.editor-viewport.find-marks-active {
+  outline: 1px solid #7a9e6a;
+  outline-offset: -1px;
 }
 
 .find-bar {
