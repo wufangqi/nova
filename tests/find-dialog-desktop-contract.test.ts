@@ -24,6 +24,7 @@ import {
   type FindMarksSurface,
   type FindTab,
 } from "../desktop/src/find-dialog.ts";
+import { planFindMarkRects } from "../desktop/src/find-marks-paint.ts";
 import { buildRegexDraft } from "../src/regex-draft.js";
 import { IntentIpcHost } from "../src/ipc/host.js";
 
@@ -420,5 +421,122 @@ describe("Find hosts RegexDraft Intent tab — not bottom-bar Patch Intent / Act
       replacement: "",
       flags: undefined,
     });
+  });
+});
+
+describe("Hit ranges are planned for editor paint (US7)", () => {
+  it("remark applies hits and planFindMarkRects draws every overlapping range", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    await host.handle({
+      method: "edit_active",
+      params: { text: "cat dog cat" },
+    });
+
+    const { dialog, marks } = makeDialog(host);
+    dialog.openDialog("intent");
+    dialog.setFields({ pattern: "cat" });
+    await dialog.remark();
+
+    assert.equal(dialog.getIntentState().marksActive, true);
+    assert.equal(dialog.getIntentState().hitCount, 2);
+    const applied = marks.log.applies.at(-1)!;
+    assert.equal(applied.length, 2);
+
+    const rects = planFindMarkRects(applied, {
+      start: 0,
+      text: "cat dog cat",
+    });
+    // Every hit overlapping the mounted window becomes at least one paint rect.
+    assert.equal(rects.length, 2);
+    assert.equal(rects[0]!.absStart, applied[0]!.start);
+    assert.equal(rects[0]!.absEnd, applied[0]!.end);
+    assert.equal(rects[1]!.absStart, applied[1]!.start);
+    assert.equal(rects[1]!.absEnd, applied[1]!.end);
+    assert.ok(rects.every((r) => r.widthCss.endsWith("ch")));
+  });
+});
+
+describe("Large Buffer degrades to mounted visible window (US8)", () => {
+  it("uses getVisibleRange when Buffer exceeds threshold and still paints hits", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    // "cat dog cat" — visible window [0, 5) is "cat d" → one "cat" hit.
+    await host.handle({
+      method: "edit_active",
+      params: { text: "cat dog cat" },
+    });
+
+    const surface = recordingSurface();
+    const marks = recordingMarks();
+    const visible = { kind: "range" as const, start: 0, end: 5 };
+    const dialog = new FindDialog(portFromHost(host), surface, {
+      marks,
+      draftEngine: { build: buildRegexDraft },
+      largeBufferThreshold: 8,
+      getBufferLength: () => 11,
+      getVisibleRange: () => visible,
+    });
+
+    dialog.openDialog("intent");
+    dialog.setFields({ pattern: "cat" });
+    await dialog.remark();
+
+    assert.equal(dialog.getIntentState().degraded, true);
+    assert.equal(dialog.getIntentState().marksActive, true);
+    assert.equal(dialog.getIntentState().hitCount, 1);
+    const applied = marks.log.applies.at(-1)!;
+    assert.equal(applied.length, 1);
+
+    const rects = planFindMarkRects(applied, {
+      start: visible.start,
+      text: "cat d",
+    });
+    assert.equal(rects.length, 1);
+    assert.equal(rects[0]!.absStart, 0);
+    assert.equal(rects[0]!.absEnd, 3);
+  });
+});
+
+describe("Empty utterance neither generates nor scans (US34)", () => {
+  it("generate with blank utterance refuses and does not call find", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    await host.handle({
+      method: "edit_active",
+      params: { text: "keep intact" },
+    });
+
+    const base = portFromHost(host);
+    let findCalls = 0;
+    const port: FindDialogPort = {
+      ...base,
+      async find(params) {
+        findCalls += 1;
+        return base.find(params);
+      },
+    };
+    const surface = recordingSurface();
+    const marks = recordingMarks();
+    const dialog = new FindDialog(port, surface, {
+      marks,
+      draftEngine: { build: buildRegexDraft },
+    });
+
+    dialog.openDialog("intent");
+    dialog.setUtterance("   ");
+    const result = await dialog.generate();
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.reason, "empty_utterance");
+    assert.equal(findCalls, 0);
+    assert.equal(dialog.getIntentState().marksActive, false);
+    assert.equal(marks.log.applies.length, 0);
   });
 });

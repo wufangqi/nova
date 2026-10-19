@@ -365,11 +365,7 @@ export class FindDialog {
   }
 
   clearMarks(): void {
-    if (this.marksActive || this.hitCount > 0) {
-      this.marks?.clearMarks();
-    } else {
-      this.marks?.clearMarks();
-    }
+    this.marks?.clearMarks();
     this.marksActive = false;
     this.hitCount = 0;
     this.degraded = false;

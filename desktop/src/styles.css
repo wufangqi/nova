@@ -424,7 +424,27 @@ button.close-prompt-secondary {
   line-height: 22px;
 }
 
+.find-mark-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.find-mark-rect {
+  position: absolute;
+  box-sizing: border-box;
+  background: rgba(170, 200, 120, 0.45);
+  border-radius: 2px;
+}
+
 .editor {
+  position: relative;
+  z-index: 1;
   display: block;
   /* Width is grown by VirtualEditor for long lines; min-width keeps fill. */
   min-width: 100%;
@@ -441,6 +461,11 @@ button.close-prompt-secondary {
   /* Soft wrap stays off: virtual scroll line height assumes one Buffer line per row. */
   white-space: pre;
   tab-size: 4;
+}
+
+/* Let mark rects show through while keeping caret/text readable. */
+.editor-window.find-marks-on .editor {
+  background: transparent;
 }
 
 .editor:disabled {
