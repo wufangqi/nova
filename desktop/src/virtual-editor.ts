@@ -90,6 +90,7 @@ export class VirtualEditor {
   private applyingRemote = false;
   private composing = false;
   private syncToken = 0;
+  private onWindowSynced: (() => void) | null = null;
 
   private readonly viewportResizeObserver: ResizeObserver;
 
@@ -162,6 +163,36 @@ export class VirtualEditor {
   /** Total line count last synced from the host (0 when unbound). */
   get lineCountSnapshot(): number {
     return this.totalLines;
+  }
+
+  /** Absolute start offset of the currently mounted window text. */
+  get mountedWindowStart(): number {
+    return this.windowStartOffset;
+  }
+
+  /** Text currently mounted in the textarea (may include overscan). */
+  get mountedWindowText(): string {
+    return this.localText;
+  }
+
+  /**
+   * Absolute [start, end) of the mounted window — used for Find mark
+   * degradation to the real visible/mounted range (not caret ±N).
+   */
+  mountedAbsRange():
+    | { kind: "range"; start: number; end: number }
+    | undefined {
+    if (!this.bufferId) return undefined;
+    return {
+      kind: "range",
+      start: this.windowStartOffset,
+      end: this.windowStartOffset + this.localText.length,
+    };
+  }
+
+  /** Fired after syncWindow / in-window edit updates the mounted text. */
+  setOnWindowSynced(cb: (() => void) | null): void {
+    this.onWindowSynced = cb;
   }
 
   /**
@@ -424,6 +455,7 @@ export class VirtualEditor {
     this.refreshSurfaceHeight();
     this.refreshContentWidth();
     this.refreshGutter();
+    this.onWindowSynced?.();
   }
 
   private refreshGutter() {
@@ -466,6 +498,7 @@ export class VirtualEditor {
       this.refreshSurfaceHeight();
       this.refreshContentWidth();
       this.refreshGutter();
+      this.onWindowSynced?.();
     } catch (err) {
       // Re-sync from core on failure.
       await this.syncWindow();

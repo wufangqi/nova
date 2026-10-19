@@ -68,6 +68,12 @@
             class="line-gutter"
             aria-hidden="true"
           ></div>
+          <!-- Hit highlights sit under the textarea (transparent bg when active). -->
+          <div
+            id="find-mark-layer"
+            class="find-mark-layer"
+            aria-hidden="true"
+          ></div>
           <textarea
             id="editor"
             class="editor"
@@ -116,23 +122,51 @@
             ×
           </button>
         </div>
-        <section class="find-panel" aria-label="FindBar">
+        <div class="find-tabs" role="tablist" aria-label="Find tabs">
+          <button
+            type="button"
+            class="find-tab"
+            role="tab"
+            id="find-tab-find"
+            data-tab="find"
+            aria-selected="true"
+          >
+            查找
+          </button>
+          <button
+            type="button"
+            class="find-tab"
+            role="tab"
+            id="find-tab-replace"
+            data-tab="replace"
+            aria-selected="false"
+          >
+            替换
+          </button>
+          <button
+            type="button"
+            class="find-tab"
+            role="tab"
+            id="find-tab-intent"
+            data-tab="intent"
+            aria-selected="false"
+          >
+            Intent
+          </button>
+        </div>
+        <section
+          class="find-panel"
+          id="find-pane-find"
+          role="tabpanel"
+          aria-labelledby="find-tab-find"
+        >
           <div class="find-bar">
             <label class="find-field">
-              <span>Find</span>
+              <span>查找目标</span>
               <input
                 id="find-pattern"
                 type="text"
                 placeholder="PCRE pattern"
-                spellcheck="false"
-              />
-            </label>
-            <label class="find-field">
-              <span>Replace</span>
-              <input
-                id="find-replacement"
-                type="text"
-                placeholder="replacement ($1…)"
                 spellcheck="false"
               />
             </label>
@@ -148,11 +182,90 @@
               <input id="find-flag-s" type="checkbox" />
               <span>s</span>
             </label>
-            <button type="button" id="find-go">Find</button>
+            <button type="button" id="find-go">查找下一个</button>
+          </div>
+          <pre id="find-hits" class="find-hits" hidden aria-live="polite"></pre>
+        </section>
+        <section
+          class="find-panel"
+          id="find-pane-replace"
+          role="tabpanel"
+          aria-labelledby="find-tab-replace"
+          hidden
+        >
+          <div class="find-bar">
+            <label class="find-field">
+              <span>查找目标</span>
+              <input
+                id="find-replace-pattern"
+                type="text"
+                placeholder="PCRE pattern"
+                spellcheck="false"
+              />
+            </label>
+            <label class="find-field">
+              <span>替换为</span>
+              <input
+                id="find-replacement"
+                type="text"
+                placeholder="replacement ($1…)"
+                spellcheck="false"
+              />
+            </label>
+            <label class="flag-toggle" title="Case insensitive">
+              <input id="find-replace-flag-i" type="checkbox" />
+              <span>i</span>
+            </label>
+            <label class="flag-toggle" title="Multiline">
+              <input id="find-replace-flag-m" type="checkbox" />
+              <span>m</span>
+            </label>
+            <label class="flag-toggle" title="Dotall">
+              <input id="find-replace-flag-s" type="checkbox" />
+              <span>s</span>
+            </label>
             <button type="button" id="find-preview-replace">Preview replace</button>
             <button type="button" id="find-replace-accept" disabled>Replace Accept</button>
           </div>
-          <pre id="find-hits" class="find-hits" hidden aria-live="polite"></pre>
+        </section>
+        <section
+          class="find-panel find-intent-panel"
+          id="find-pane-intent"
+          role="tabpanel"
+          aria-labelledby="find-tab-intent"
+          hidden
+        >
+          <div class="find-intent-columns">
+            <label class="find-field find-intent-col">
+              <span>意图识别</span>
+              <input
+                id="find-intent-utterance"
+                type="text"
+                placeholder="写正则 匹配邮箱 / regex a(\\d)"
+                spellcheck="false"
+              />
+            </label>
+            <label class="find-field find-intent-col">
+              <span>生成正则</span>
+              <input
+                id="find-intent-pattern"
+                type="text"
+                placeholder="可手改后重新标记"
+                spellcheck="false"
+              />
+            </label>
+          </div>
+          <div class="find-bar find-intent-actions">
+            <button type="button" id="find-intent-generate">生成</button>
+            <button type="button" id="find-intent-remark">按此正则重新标记</button>
+            <button type="button" id="find-intent-clear-marks">清除标记</button>
+            <button type="button" id="find-intent-save-action" disabled>
+              Save as Action
+            </button>
+            <span id="find-intent-hit-count" class="find-intent-hit-count" aria-live="polite"
+              >0 处命中</span
+            >
+          </div>
         </section>
       </div>
 

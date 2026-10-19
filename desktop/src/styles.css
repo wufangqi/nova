@@ -426,7 +426,27 @@ button.close-prompt-secondary {
   line-height: 22px;
 }
 
+.find-mark-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.find-mark-rect {
+  position: absolute;
+  box-sizing: border-box;
+  background: rgba(170, 200, 120, 0.45);
+  border-radius: 2px;
+}
+
 .editor {
+  position: relative;
+  z-index: 1;
   display: block;
   /* Width is grown by VirtualEditor for long lines; min-width keeps fill. */
   min-width: 100%;
@@ -443,6 +463,11 @@ button.close-prompt-secondary {
   /* Soft wrap stays off: virtual scroll line height assumes one Buffer line per row. */
   white-space: pre;
   tab-size: 4;
+}
+
+/* Let mark rects show through while keeping caret/text readable. */
+.editor-window.find-marks-on .editor {
+  background: transparent;
 }
 
 .editor:disabled {
@@ -515,6 +540,35 @@ button.close-prompt-secondary {
   background: #b8beb7;
 }
 
+.find-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 0.35rem;
+  background: #cfd4ce;
+  border-bottom: 1px solid #bdb7aa;
+}
+
+.find-tab {
+  padding: 0.3rem 0.75rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+  color: #1c1c1c;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.find-tab[aria-selected="true"] {
+  background: #e2e6e0;
+  border-color: #bdb7aa;
+  margin-bottom: -1px;
+}
+
+.find-tab:hover:not([aria-selected="true"]) {
+  background: #b8beb7;
+}
+
 .find-panel {
   display: flex;
   flex-direction: column;
@@ -522,6 +576,31 @@ button.close-prompt-secondary {
   padding: 0.55rem 0.75rem;
   background: transparent;
   border-top: none;
+}
+
+.find-panel[hidden] {
+  display: none !important;
+}
+
+.find-intent-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.find-intent-col {
+  flex: 1 1 12rem;
+}
+
+.find-intent-hit-count {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #3a4038;
+}
+
+.editor-viewport.find-marks-active {
+  outline: 1px solid #7a9e6a;
+  outline-offset: -1px;
 }
 
 .find-bar {
