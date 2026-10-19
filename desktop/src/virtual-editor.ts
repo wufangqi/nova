@@ -9,6 +9,10 @@ import {
   type CaretWindowContext,
 } from "./status-metrics.ts";
 import {
+  editorContentWidthPx,
+  gutterHorizontalPinTranslateX,
+} from "./editor-layout.ts";
+import {
   lineGutterLabels,
   mountedLineCountFromText,
   paintLineGutter,
@@ -94,6 +98,7 @@ export class VirtualEditor {
     private readonly gutterEl: HTMLElement | null = null,
   ) {
     this.viewport.addEventListener("scroll", () => {
+      this.pinGutterHorizontally();
       void this.onScroll();
     });
     this.textarea.addEventListener("compositionstart", () => {
@@ -208,6 +213,7 @@ export class VirtualEditor {
       this.windowEl.style.top = "0px";
       this.applyingRemote = false;
       this.setEnabled(false);
+      this.refreshContentWidth();
       this.refreshGutter();
       return;
     }
@@ -304,6 +310,34 @@ export class VirtualEditor {
     this.spacer.style.height = `${height}px`;
   }
 
+  /**
+   * Grow the abspos window / textarea / spacer past the viewport when a long
+   * unwrapped line is mounted, so the shared viewport can scroll horizontally.
+   */
+  private refreshContentWidth() {
+    // Measure intrinsic line width: temporarily collapse CSS width so
+    // scrollWidth reflects the longest mounted line, then size to max(vp, line).
+    const prevWidth = this.textarea.style.width;
+    this.textarea.style.width = "0px";
+    const lineWidth = this.textarea.scrollWidth;
+    const widthPx = editorContentWidthPx(
+      this.viewport.clientWidth,
+      lineWidth,
+    );
+    const width = `${widthPx}px`;
+    this.textarea.style.width = width || prevWidth;
+    this.windowEl.style.width = width;
+    this.spacer.style.width = width;
+    this.pinGutterHorizontally();
+  }
+
+  /** Keep gutter at the viewport left while content scrolls horizontally. */
+  private pinGutterHorizontally() {
+    if (!this.gutterEl) return;
+    const x = gutterHorizontalPinTranslateX(this.viewport.scrollLeft);
+    this.gutterEl.style.transform = x === 0 ? "" : `translateX(${x}px)`;
+  }
+
   private async onScroll() {
     if (!this.bufferId || this.applyingRemote) return;
     const next = Math.floor(this.viewport.scrollTop / LINE_HEIGHT_PX);
@@ -345,12 +379,14 @@ export class VirtualEditor {
       this.textarea.setSelectionRange(selStart, selEnd);
     }
     this.applyingRemote = false;
+    this.refreshContentWidth();
     this.refreshGutter();
   }
 
   private refreshGutter() {
     if (!this.gutterEl) return;
     paintLineGutter(this.gutterEl, this.gutterLabelsSnapshot());
+    this.pinGutterHorizontally();
   }
 
   private async flushEdit() {
@@ -384,6 +420,7 @@ export class VirtualEditor {
       this.applyingRemote = true;
       this.textarea.setSelectionRange(caret, caret);
       this.applyingRemote = false;
+      this.refreshContentWidth();
       this.refreshGutter();
     } catch (err) {
       // Re-sync from core on failure.

@@ -10,6 +10,11 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -18,6 +23,8 @@ body {
 .app {
   display: grid;
   grid-template-rows: auto auto auto 1fr auto auto auto auto auto;
+  /* Definite height so the middle 1fr editor track fills the window. */
+  height: 100vh;
   min-height: 100vh;
   position: relative;
 }
@@ -366,29 +373,33 @@ button.close-prompt-secondary {
 .editor-viewport {
   position: relative;
   width: 100%;
+  /* Fill the middle grid 1fr band; keep a short-window floor. */
+  height: 100%;
   min-height: 16rem;
+  /* One scroller for vertical virtualization + horizontal long-line reach. */
   overflow: auto;
   background: #fff;
   border: 0;
 }
 
 .editor-spacer {
+  /* Width is set by VirtualEditor so long lines expand scrollWidth. */
   width: 1px;
+  min-width: 100%;
   pointer-events: none;
 }
 
 .editor-window {
   position: absolute;
   left: 0;
-  right: 0;
   top: 0;
-  /* Stretch to viewport width — without width/min-width, abspos can shrink-to-fit
-     the textarea intrinsic cols (~200px) and leave a large blank right half. */
-  width: 100%;
+  /* min-width:100% prevents abspos half-column collapse; width may grow past
+     the viewport for long unwrapped lines (no right:0 + width:100% pin). */
   min-width: 100%;
+  min-height: 100%;
 }
 
-/* WUF-116: absolute overlay so .editor keeps width:100% (half-width chain intact). */
+/* WUF-116 / WUF-118: absolute overlay; horizontal pin via translateX(scrollLeft). */
 .line-gutter {
   position: absolute;
   left: 0;
@@ -396,6 +407,7 @@ button.close-prompt-secondary {
   z-index: 1;
   box-sizing: border-box;
   min-width: 2.75rem;
+  min-height: 100%;
   padding: 0.85rem 0.45rem 0.85rem 0.35rem;
   text-align: right;
   pointer-events: none;
@@ -404,6 +416,7 @@ button.close-prompt-secondary {
   border-right: 1px solid #e4e0d8;
   color: #8a857c;
   font: 15px/22px "Cascadia Mono", "Consolas", "Segoe UI Mono", monospace;
+  will-change: transform;
 }
 
 .line-gutter-row {
@@ -413,9 +426,9 @@ button.close-prompt-secondary {
 
 .editor {
   display: block;
-  width: 100%;
+  /* Width is grown by VirtualEditor for long lines; min-width keeps fill. */
   min-width: 100%;
-  min-height: 16rem;
+  min-height: 100%;
   margin: 0;
   /* Left padding clears the gutter overlay so text stays readable. */
   padding: 0.85rem 1rem 0.85rem 3.4rem;
