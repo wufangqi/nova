@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Nova Tauri desktop shell (WUF-81/82/83/84) — IntentService + EditorShell + global hotkey + Intent preview"
 authors = ["nova"]
 edition = "2021"

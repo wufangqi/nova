@@ -4,4 +4,4 @@
  * desktop/package.json `version`.
  */
 export const APP_PRODUCT_NAME = "Nova";
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "0.1.1";
