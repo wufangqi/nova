@@ -34,9 +34,19 @@ type SurfaceLog = {
   focusIntentCalls: number;
   tabs: WorkbenchTab[];
   geometries: WorkbenchGeometry[];
+  measuredTabs: WorkbenchTab[];
 };
 
-function recordingSurface(): FindDialogSurface & { log: SurfaceLog } {
+/** Find panel is shorter; Intent (+ Actions) is taller — used to catch wrong-size centering. */
+const FIND_SIZE = { widthPx: 400, heightPx: 300 };
+const INTENT_SIZE = { widthPx: 400, heightPx: 500 };
+
+function recordingSurface(
+  opts: {
+    /** When true, measureSize returns FIND vs INTENT heights by tab. */
+    tabSizes?: boolean;
+  } = {},
+): FindDialogSurface & { log: SurfaceLog } {
   const log: SurfaceLog = {
     presents: [],
     dismisses: 0,
@@ -44,15 +54,16 @@ function recordingSurface(): FindDialogSurface & { log: SurfaceLog } {
     focusIntentCalls: 0,
     tabs: [],
     geometries: [],
+    measuredTabs: [],
   };
   return {
     log,
-    present(fields, opts) {
+    present(fields, presentOpts) {
       log.presents.push({
         fields: { ...fields, flags: { ...fields.flags } },
         opts: {
-          tab: opts.tab,
-          geometry: { ...opts.geometry },
+          tab: presentOpts.tab,
+          geometry: { ...presentOpts.geometry },
         },
       });
     },
@@ -70,6 +81,11 @@ function recordingSurface(): FindDialogSurface & { log: SurfaceLog } {
     },
     setGeometry(geometry) {
       log.geometries.push({ ...geometry });
+    },
+    measureSize(tab) {
+      if (!opts.tabSizes) return FIND_SIZE;
+      log.measuredTabs.push(tab);
+      return tab === "intent" ? INTENT_SIZE : FIND_SIZE;
     },
   };
 }
@@ -114,7 +130,7 @@ function portFromHost(host: IntentIpcHost): FindDialogPort {
 }
 
 const CLIENT = { widthPx: 1000, heightPx: 800 };
-const SIZE = { widthPx: 400, heightPx: 300 };
+const SIZE = FIND_SIZE;
 
 describe("Find dialog is modeless — Find/replace/flags while editor stays editable", () => {
   it("openDialog presents fields and does not block the editor", async () => {
@@ -128,8 +144,8 @@ describe("Find dialog is modeless — Find/replace/flags while editor stays edit
     dialog.openDialog({ client: CLIENT, size: SIZE });
     assert.equal(dialog.isOpen(), true);
     assert.equal(dialog.blocksEditor(), false);
-    assert.equal(surface.log.presents.length, 1);
-    assert.deepEqual(surface.log.presents[0]!.fields, dialog.getFields());
+    assert.ok(surface.log.presents.length >= 1);
+    assert.deepEqual(surface.log.presents.at(-1)!.fields, dialog.getFields());
 
     dialog.setFields({
       pattern: "alpha",
@@ -204,9 +220,11 @@ describe("RegexDraft opens Intent tab with fields filled", () => {
     assert.equal(dialog.isOpen(), true);
     assert.equal(dialog.getTab(), "intent");
     assert.equal(dialog.getFields().pattern, "a(\\d)");
-    assert.equal(surface.log.presents.length, 1);
-    assert.equal(surface.log.presents[0]!.opts.tab, "intent");
+    assert.ok(surface.log.presents.length >= 1);
+    assert.equal(surface.log.presents.at(-1)!.opts.tab, "intent");
     assert.equal(surface.log.focusIntentCalls, 1);
+    // Regression: void focusIntent must not fall through to focusPattern via `??`.
+    assert.equal(surface.log.focusPatternCalls, 0);
     assert.equal(await sliceAll(host, bufferId), "a1 b2 a3");
 
     const found = await dialog.find();
@@ -262,6 +280,50 @@ describe("Workbench hosts Intent/Actions", () => {
     dialog.setTab("intent");
     assert.equal(dialog.getTab(), "intent");
   });
+
+  it("Intent tab Preview→Accept writes Buffer (not an empty shell)", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    const bufferId = evoked.result.buffer.id;
+    await host.handle({
+      method: "edit_active",
+      params: { text: "hello world" },
+    });
+
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE, tab: "intent" });
+    assert.equal(dialog.getTab(), "intent");
+    assert.equal(dialog.hostsIntentOrAction(), true);
+
+    const previewed = await host.handle({
+      method: "preview_intent",
+      params: {
+        utterance: "uppercase",
+        selection: { start: 0, end: 5 },
+      },
+    });
+    assert.equal(previewed.ok, true);
+    if (!previewed.ok) return;
+    assert.equal(previewed.result.preview.kind, "patches");
+    if (previewed.result.preview.kind !== "patches") return;
+    assert.equal(await sliceAll(host, bufferId), "hello world");
+
+    const accepted = await host.handle({
+      method: "accept",
+      params: { patches: previewed.result.preview.patches },
+    });
+    assert.equal(accepted.ok, true);
+    if (!accepted.ok) return;
+    assert.equal(accepted.result.accept.ok, true);
+    assert.equal(await sliceAll(host, bufferId), "HELLO world");
+    // Workbench still hosts Intent after Accept — panel is not a dead shell.
+    assert.equal(dialog.isOpen(), true);
+    assert.equal(dialog.getTab(), "intent");
+    assert.equal(dialog.hostsIntentOrAction(), true);
+  });
 });
 
 describe("Workbench geometry: center, drag, clamp, session memory", () => {
@@ -273,6 +335,38 @@ describe("Workbench geometry: center, drag, clamp, session memory", () => {
     assert.deepEqual(dialog.getGeometry(), { leftPx: 300, topPx: 250 });
     assert.equal(dialog.getSessionGeometry(), undefined);
     assert.equal(dialog.hasPersistentGeometryKey(), false);
+  });
+
+  it("File→Intent… path centers using Intent page size, not Find height", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface({ tabSizes: true });
+    const dialog = new FindDialog(portFromHost(host), surface);
+    // Caller may still pass Find-sized fallback; measureSize must win after present.
+    dialog.openDialog({
+      tab: "intent",
+      client: CLIENT,
+      size: FIND_SIZE,
+    });
+    assert.deepEqual(surface.log.measuredTabs, ["intent"]);
+    // INTENT_SIZE 400×500 → center top = (800-500)/2 = 150 (not Find's 250).
+    assert.deepEqual(dialog.getGeometry(), { leftPx: 300, topPx: 150 });
+  });
+
+  it("RegexDraft path centers using Intent size and never calls focusPattern", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    const surface = recordingSurface({ tabSizes: true });
+    const dialog = new FindDialog(portFromHost(host), surface);
+    await dialog.applyRegexDraft(
+      { pattern: "x", replacement: "", flags: "g" },
+      { client: CLIENT, size: FIND_SIZE },
+    );
+    assert.deepEqual(surface.log.measuredTabs, ["intent"]);
+    assert.deepEqual(dialog.getGeometry(), { leftPx: 300, topPx: 150 });
+    assert.equal(surface.log.focusIntentCalls, 1);
+    assert.equal(surface.log.focusPatternCalls, 0);
   });
 
   it("drag updates geometry, clamps, and remembers for re-present", () => {

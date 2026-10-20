@@ -94,6 +94,11 @@ export type FindDialogSurface = {
   focusIntent?(): void;
   setTab?(tab: WorkbenchTab): void;
   setGeometry?(geometry: WorkbenchGeometry): void;
+  /**
+   * Size of the dialog after the given tab is shown. Called after `present` so
+   * Intent (taller) vs Find heights are measured correctly for centering.
+   */
+  measureSize?(tab: WorkbenchTab): WorkbenchSize;
 };
 
 export type OpenDialogOpts = {
@@ -218,9 +223,11 @@ export class FindDialog {
     if (opts.client) this.lastClient = opts.client;
     if (opts.size) this.lastSize = opts.size;
     if (opts.tab) this.tab = opts.tab;
-    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
     this.open = true;
+    // Present the target tab first so measureSize sees Intent (taller) layout.
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
     this.surface.present(this.getFields(), this.presentOpts());
+    this.relayoutAfterPresent();
   }
 
   closeDialog(): void {
@@ -238,7 +245,7 @@ export class FindDialog {
   focusIntent(): void {
     if (!this.open) this.openDialog({ tab: "intent" });
     else this.setTab("intent");
-    this.surface.focusIntent?.();
+    this.focusWorkbenchField();
   }
 
   /**
@@ -282,10 +289,13 @@ export class FindDialog {
       flags: flagsFromDraftString(draft.flags),
     };
     this.tab = "intent";
-    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
     this.open = true;
+    // Present Intent tab first, then remeasure — do not center on Find height.
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
     this.surface.present(this.getFields(), this.presentOpts());
-    this.surface.focusIntent?.() ?? this.surface.focusPattern();
+    this.relayoutAfterPresent();
+    // Explicit branch: void-returning focusIntent must not fall through via `??`.
+    this.focusWorkbenchField();
   }
 
   /**
@@ -338,6 +348,28 @@ export class FindDialog {
 
   private presentOpts(): PresentOpts {
     return { tab: this.tab, geometry: { ...this.geometry } };
+  }
+
+  /** Prefer Intent input when available; never call both. */
+  private focusWorkbenchField(): void {
+    if (typeof this.surface.focusIntent === "function") {
+      this.surface.focusIntent();
+      return;
+    }
+    this.surface.focusPattern();
+  }
+
+  /**
+   * After the target tab is visible, remeasure and re-center/clamp so Intent
+   * openings do not use the shorter Find-panel height.
+   */
+  private relayoutAfterPresent(): void {
+    const measured = this.surface.measureSize?.(this.tab);
+    if (!measured) return;
+    this.lastSize = measured;
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
+    this.surface.setGeometry?.(this.geometry);
+    this.surface.present(this.getFields(), this.presentOpts());
   }
 
   private resolveGeometry(

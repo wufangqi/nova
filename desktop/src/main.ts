@@ -522,6 +522,15 @@ function workbenchDialogSize(): { widthPx: number; heightPx: number } {
   return { widthPx, heightPx };
 }
 
+/** Measure after the target tab is shown (Intent is taller than Find). */
+function measureWorkbenchSizeForTab(tab: WorkbenchTab): {
+  widthPx: number;
+  heightPx: number;
+} {
+  syncWorkbenchTabUi(tab);
+  return workbenchDialogSize();
+}
+
 const findSurface: FindDialogSurface = {
   present(fields, opts) {
     writeFindFieldsToDom(fields);
@@ -549,6 +558,9 @@ const findSurface: FindDialogSurface = {
   },
   setGeometry(geometry) {
     applyWorkbenchGeometry(geometry);
+  },
+  measureSize(tab) {
+    return measureWorkbenchSizeForTab(tab);
   },
 };
 
@@ -909,10 +921,9 @@ async function fillFindBarFromDraft(draft: {
   replacement?: string;
   flags?: string;
 }) {
-  // Opens Intent tab; apply_draft stays on the IPC seam; mark hits (no Buffer write).
+  // Opens Intent tab; size measured after present (Intent height), not Find height.
   await findDialog.applyRegexDraft(draft, {
     client: workbenchClientSize(),
-    size: workbenchDialogSize(),
   });
   await findDialog.markHits();
   updateIntentHitCountLabel();
@@ -1733,10 +1744,10 @@ async function selectSuggestion(suggestion: Suggestion) {
 function openFindChrome(opts: { tab?: WorkbenchTab } = {}): void {
   const tab = opts.tab ?? "find";
   findDialog.setFields(readFindFieldsFromDom());
+  // Do not pre-measure size here — openDialog presents the tab then measureSize.
   findDialog.openDialog({
     tab,
     client: workbenchClientSize(),
-    size: workbenchDialogSize(),
   });
   if (tab === "intent") {
     findDialog.focusIntent();

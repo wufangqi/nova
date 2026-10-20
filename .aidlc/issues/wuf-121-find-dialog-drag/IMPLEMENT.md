@@ -14,3 +14,9 @@
 - 主缝：`desktop/src/find-dialog.ts` + `find-workbench-geometry.ts`
 - 壳薄断言：`shell-workbench-layout.ts`
 - 测试：`find-dialog-desktop-contract`、`find-workbench-geometry-contract`、`shell-workbench-layout-contract`、`shell-chrome-contract` 等
+
+## 评审返工（相对 REVIEW 需改三项）
+
+1. RegexDraft 焦点：显式二选一聚焦 Intent，合同断言 `focusPatternCalls === 0`。
+2. Intent 入口居中：`present` 后再 `measureSize(tab)` 重排；合同覆盖 File→Intent… 与 RegexDraft 用 Intent 页高度。
+3. Intent Preview→Accept：合同走 `preview_intent` → `accept` 写 Buffer，避免空壳回归。
