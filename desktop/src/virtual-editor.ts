@@ -10,6 +10,8 @@ import {
 } from "./status-metrics.ts";
 import {
   editorContentWidthPx,
+  editorSurfaceMinHeightPx,
+  editorSurfaceVerticalPaddingPx,
   gutterHorizontalPinTranslateX,
 } from "./editor-layout.ts";
 import {
@@ -88,6 +90,9 @@ export class VirtualEditor {
   private applyingRemote = false;
   private composing = false;
   private syncToken = 0;
+  private onWindowSynced: (() => void) | null = null;
+
+  private readonly viewportResizeObserver: ResizeObserver;
 
   constructor(
     private readonly viewport: HTMLElement,
@@ -111,6 +116,11 @@ export class VirtualEditor {
     this.textarea.addEventListener("input", () => {
       if (!this.composing) void this.flushEdit();
     });
+    this.viewportResizeObserver = new ResizeObserver(() => {
+      this.refreshSurfaceHeight();
+      this.refreshContentWidth();
+    });
+    this.viewportResizeObserver.observe(this.viewport);
   }
 
   get activeBufferId(): string | null {
@@ -153,6 +163,36 @@ export class VirtualEditor {
   /** Total line count last synced from the host (0 when unbound). */
   get lineCountSnapshot(): number {
     return this.totalLines;
+  }
+
+  /** Absolute start offset of the currently mounted window text. */
+  get mountedWindowStart(): number {
+    return this.windowStartOffset;
+  }
+
+  /** Text currently mounted in the textarea (may include overscan). */
+  get mountedWindowText(): string {
+    return this.localText;
+  }
+
+  /**
+   * Absolute [start, end) of the mounted window — used for Find mark
+   * degradation to the real visible/mounted range (not caret ±N).
+   */
+  mountedAbsRange():
+    | { kind: "range"; start: number; end: number }
+    | undefined {
+    if (!this.bufferId) return undefined;
+    return {
+      kind: "range",
+      start: this.windowStartOffset,
+      end: this.windowStartOffset + this.localText.length,
+    };
+  }
+
+  /** Fired after syncWindow / in-window edit updates the mounted text. */
+  setOnWindowSynced(cb: (() => void) | null): void {
+    this.onWindowSynced = cb;
   }
 
   /**
@@ -213,6 +253,7 @@ export class VirtualEditor {
       this.windowEl.style.top = "0px";
       this.applyingRemote = false;
       this.setEnabled(false);
+      this.refreshSurfaceHeight();
       this.refreshContentWidth();
       this.refreshGutter();
       return;
@@ -331,6 +372,38 @@ export class VirtualEditor {
     this.pinGutterHorizontally();
   }
 
+  /**
+   * WUF-119: keep textarea + gutter hit boxes at least one viewport tall
+   * (CSS min-height:100% is fallback only). Also covers disabled / empty bind.
+   */
+  private refreshSurfaceHeight() {
+    const pad = this.surfaceVerticalPaddingPx();
+    const mounted = mountedLineCountFromText(this.localText);
+    const minPx = editorSurfaceMinHeightPx(
+      this.viewport.clientHeight,
+      mounted,
+      LINE_HEIGHT_PX,
+      pad,
+    );
+    const minHeight = `${minPx}px`;
+    this.windowEl.style.minHeight = minHeight;
+    this.textarea.style.minHeight = minHeight;
+    if (this.gutterEl) {
+      this.gutterEl.style.minHeight = minHeight;
+    }
+  }
+
+  /** Prefer live computed padding; fall back to stylesheet rem rule. */
+  private surfaceVerticalPaddingPx(): number {
+    if (typeof getComputedStyle === "function") {
+      const style = getComputedStyle(this.textarea);
+      const top = Number.parseFloat(style.paddingTop) || 0;
+      const bottom = Number.parseFloat(style.paddingBottom) || 0;
+      if (top + bottom > 0) return top + bottom;
+    }
+    return editorSurfaceVerticalPaddingPx();
+  }
+
   /** Keep gutter at the viewport left while content scrolls horizontally. */
   private pinGutterHorizontally() {
     if (!this.gutterEl) return;
@@ -379,8 +452,10 @@ export class VirtualEditor {
       this.textarea.setSelectionRange(selStart, selEnd);
     }
     this.applyingRemote = false;
+    this.refreshSurfaceHeight();
     this.refreshContentWidth();
     this.refreshGutter();
+    this.onWindowSynced?.();
   }
 
   private refreshGutter() {
@@ -420,8 +495,10 @@ export class VirtualEditor {
       this.applyingRemote = true;
       this.textarea.setSelectionRange(caret, caret);
       this.applyingRemote = false;
+      this.refreshSurfaceHeight();
       this.refreshContentWidth();
       this.refreshGutter();
+      this.onWindowSynced?.();
     } catch (err) {
       // Re-sync from core on failure.
       await this.syncWindow();

@@ -22,9 +22,16 @@ import {
   type FindDialogFields,
   type FindDialogPort,
   type FindDialogSurface,
+  type FindHit as FindMarkHit,
+  type FindMarksSurface,
   type WorkbenchGeometry,
   type WorkbenchTab,
 } from "./find-dialog.ts";
+import {
+  clearFindMarkLayer,
+  paintFindMarkLayer,
+  planFindMarkRects,
+} from "./find-marks-paint.ts";
 import { APP_PRODUCT_NAME, APP_VERSION } from "./app-meta.ts";
 import { GotoLinePopup, type GotoLinePopupSurface } from "./goto-line-popup.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
@@ -493,8 +500,14 @@ function updateIntentHitCountLabel() {
   const marks = findDialog.getMarksState();
   const label = document.getElementById("intent-hit-count");
   if (label) {
-    label.textContent = `${marks.hitCount} hit${marks.hitCount === 1 ? "" : "s"}`;
+    label.textContent = marks.degraded
+      ? `可见窗约 ${marks.hitCount} 处命中`
+      : `${marks.hitCount} hit${marks.hitCount === 1 ? "" : "s"}`;
   }
+  el<HTMLElement>("editor-viewport").classList.toggle(
+    "find-marks-active",
+    marks.marksActive,
+  );
 }
 
 function workbenchClientSize(): { widthPx: number; heightPx: number } {
@@ -541,6 +554,7 @@ const findSurface: FindDialogSurface = {
   },
   dismiss() {
     el<HTMLElement>("find-dialog").hidden = true;
+    el<HTMLElement>("editor-viewport").classList.remove("find-marks-active");
     updateIntentHitCountLabel();
   },
   focusPattern() {
@@ -564,14 +578,80 @@ const findSurface: FindDialogSurface = {
   },
 };
 
-const findDialog = new FindDialog(findPort, findSurface);
+/** Assigned in DOMContentLoaded before any user interaction. */
+let virtualEditor!: VirtualEditor;
+
+/** Active mark hits (abs Buffer offsets) — re-painted when the mounted window moves. */
+let activeFindMarkHits: FindMarkHit[] = [];
+
+function repaintFindMarks(): void {
+  const layer = el<HTMLElement>("find-mark-layer");
+  const windowEl = el<HTMLElement>("editor-window");
+  const viewport = el<HTMLElement>("editor-viewport");
+  if (activeFindMarkHits.length === 0) {
+    clearFindMarkLayer(layer);
+    windowEl.classList.remove("find-marks-on");
+    viewport.classList.remove("find-marks-active");
+    return;
+  }
+  const rects = planFindMarkRects(activeFindMarkHits, {
+    start: virtualEditor.mountedWindowStart,
+    text: virtualEditor.mountedWindowText,
+  });
+  paintFindMarkLayer(layer, rects);
+  windowEl.classList.add("find-marks-on");
+  viewport.classList.add("find-marks-active");
+}
+
+const findMarksSurface: FindMarksSurface = {
+  applyMarks(hits) {
+    activeFindMarkHits = hits.map((h) => ({ ...h }));
+    repaintFindMarks();
+    const first = hits[0];
+    if (first) {
+      void virtualEditor
+        .revealRange(first.start, first.end, first.line)
+        .then(() => {
+          repaintFindMarks();
+        });
+    }
+  },
+  clearMarks() {
+    activeFindMarkHits = [];
+    const layer = document.getElementById("find-mark-layer");
+    if (layer) clearFindMarkLayer(layer);
+    document.getElementById("editor-window")?.classList.remove("find-marks-on");
+    document
+      .getElementById("editor-viewport")
+      ?.classList.remove("find-marks-active");
+  },
+};
+
+const findDialog = new FindDialog(findPort, findSurface, {
+  marks: findMarksSurface,
+  getBufferLength: async () => {
+    if (!activeId) return 0;
+    try {
+      const r = await invoke<{ len: number }>("buffer_len_cmd", { id: activeId });
+      return r.len;
+    } catch {
+      return 0;
+    }
+  },
+  getVisibleRange: () => {
+    try {
+      return virtualEditor.mountedAbsRange();
+    } catch {
+      return undefined;
+    }
+  },
+});
 
 let activeId: string | null = null;
 let pendingPreviewId: string | null = null;
 let pendingPreviewKind: PreviewKindForSave = null;
 let pendingPatches: Patch[] | null = null;
 let lastUndoGroupId: string | null = null;
-let virtualEditor: VirtualEditor;
 let gotoLinePopup: GotoLinePopup;
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -1986,6 +2066,10 @@ window.addEventListener("DOMContentLoaded", () => {
     },
     el("line-gutter"),
   );
+  // Re-paint hit highlights when the mounted window scrolls / remounts.
+  virtualEditor.setOnWindowSynced(() => {
+    if (activeFindMarkHits.length > 0) repaintFindMarks();
+  });
   const editorEl = el<HTMLTextAreaElement>("editor");
   editorEl.addEventListener("paste", (ev) => {
     void onEditorPaste(ev);

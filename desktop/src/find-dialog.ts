@@ -60,6 +60,25 @@ export type WorkbenchGeometry = WorkbenchPoint;
 export type FindMarksState = {
   marksActive: boolean;
   hitCount: number;
+  /** True when marks were limited to a visible window on a large Buffer. */
+  degraded?: boolean;
+};
+
+/** Default size above which marks may degrade to the visible window. */
+export const FIND_MARKS_LARGE_BUFFER = 256_000;
+
+/** Visual mark layer — never mutates Buffer text. */
+export type FindMarksSurface = {
+  applyMarks(hits: FindHit[]): void;
+  clearMarks(): void;
+};
+
+export type FindDialogOptions = {
+  marks?: FindMarksSurface;
+  /** Buffer length probe for large-Buffer mark degradation. */
+  getBufferLength?: () => Promise<number> | number;
+  getVisibleRange?: () => FindScope | undefined;
+  largeBufferThreshold?: number;
 };
 
 export type FindDialogPort = {
@@ -143,14 +162,29 @@ export class FindDialog {
   private geometry: WorkbenchGeometry = { leftPx: 0, topPx: 0 };
   /** In-memory only — undefined until the user drags (or after restart). */
   private sessionMemory: WorkbenchGeometry | undefined;
-  private marks: FindMarksState = { marksActive: false, hitCount: 0 };
+  private marks: FindMarksState = {
+    marksActive: false,
+    hitCount: 0,
+    degraded: false,
+  };
   private lastClient: ClientSize = DEFAULT_CLIENT;
   private lastSize: WorkbenchSize = DEFAULT_SIZE;
+  private readonly marksSurface: FindMarksSurface | undefined;
+  private readonly getBufferLength: (() => Promise<number> | number) | undefined;
+  private readonly getVisibleRange: (() => FindScope | undefined) | undefined;
+  private readonly largeBufferThreshold: number;
 
   constructor(
     private readonly port: FindDialogPort,
     private readonly surface: FindDialogSurface,
-  ) {}
+    options: FindDialogOptions = {},
+  ) {
+    this.marksSurface = options.marks;
+    this.getBufferLength = options.getBufferLength;
+    this.getVisibleRange = options.getVisibleRange;
+    this.largeBufferThreshold =
+      options.largeBufferThreshold ?? FIND_MARKS_LARGE_BUFFER;
+  }
 
   isOpen(): boolean {
     return this.open;
@@ -300,24 +334,45 @@ export class FindDialog {
 
   /**
    * Mark hits for the current pattern on the active Buffer (via find port).
-   * Does not write Buffer text.
+   * Does not write Buffer text. Large buffers may degrade to the visible window.
    */
   async markHits(extra: FindParams = {}): Promise<FindMarksState> {
     if (!this.fields.pattern && !extra.pattern) {
-      this.marks = { marksActive: false, hitCount: 0 };
+      this.clearMarks();
       return this.getMarksState();
     }
-    const found = await this.port.find(this.params(extra));
+
+    let scope = extra.scope ?? this.scope;
+    let degraded = false;
+    if (this.getBufferLength) {
+      const len = await this.getBufferLength();
+      if (len > this.largeBufferThreshold) {
+        const visible = this.getVisibleRange?.();
+        if (visible && visible.kind === "range") {
+          scope = visible;
+          degraded = true;
+        }
+      }
+    }
+
+    const found = await this.port.find(this.params({ ...extra, scope }));
     this.marks = {
       marksActive: found.count > 0,
       hitCount: found.count,
+      degraded,
     };
+    if (this.marks.marksActive) {
+      this.marksSurface?.applyMarks(found.hits);
+    } else {
+      this.marksSurface?.clearMarks();
+    }
     return this.getMarksState();
   }
 
   /** Clear marks (dismiss / explicit clear / Buffer edit). */
   clearMarks(): void {
-    this.marks = { marksActive: false, hitCount: 0 };
+    this.marksSurface?.clearMarks();
+    this.marks = { marksActive: false, hitCount: 0, degraded: false };
   }
 
   /** Buffer content changed — drop marks so highlights do not go stale. */
