@@ -281,9 +281,14 @@ type FindIpcResult = {
   tabs: TabInfo[];
 };
 
+/** IPC replace preview patches include provenance (FindDialogPort requires it). */
+type PreviewReplacePatch = Patch & {
+  provenance: { source: string; label?: string };
+};
+
 type PreviewReplaceIpcResult = {
   preview:
-    | { ok: true; patches: Patch[] }
+    | { ok: true; patches: PreviewReplacePatch[] }
     | {
         ok: false;
         reason: string;
