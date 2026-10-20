@@ -10,13 +10,15 @@
 | --- | --- | --- |
 | 核心合同 | `IntentService` / Buffer / FindBar / 十秒 Demo（CLI + 测试） | 已合入 `main` |
 | 桌面壳 | Tauri UI + IPC 挂接同一套核心 | 已合入 `main` |
+| 编辑器壳 | 菜单栏、标题栏、行号 gutter、状态栏、Ctrl+G 跳行；视口满高双轴滚动 | 已合入 `main` |
+| Find 工作台 | 居中可拖；查找 / 替换 / Intent（含 Actions）；命中高亮不写 Buffer | 已合入 `main` |
 | 可复用动作 | 自 RegexDraft 存为 Action，Selection 上再跑 → Accept | 已合入 `main` |
 | 性能内核 | Rust Buffer 真身（ropey）+ 虚滚编辑 + 可取消 Find；Windows ~100MB 门禁 | 已合入 `main` |
 | 产品名 / 变现 | — | 挂起 |
 
 验证目标平台：**Windows**。Linux / macOS 尽力而为。
 
-> 安装包 Release 仍可能停在较早 tag（如 `v0.1.0`）；要以当前 `main` 能力为准请自行打 `v*` 或跑 **Windows Release** 工作流。
+当前安装包 tag：**[v0.1.1](https://github.com/wufangqi/nova/releases/tag/v0.1.1)**（与 `main` 对齐）。后续能力以 `main` 为准；新包推送 `v*` 或跑 **Windows Release** 工作流。
 
 ## Windows 安装包下载
 
@@ -31,7 +33,7 @@
 
 需要 Windows 10+；缺 WebView2 时安装器会引导补齐。安装包内嵌便携 Node 与 native Buffer 核心，用于 Intent IPC（无需本机预装 Node）。离线 AI 仍需另备本地模型（可选）。
 
-发布方式：推送 tag `v*`（如 `v0.2.0`），或在 Actions 里手动跑 **Windows Release** 工作流。
+发布方式：推送 tag `v*`（如 `v0.1.2`），或在 Actions 里手动跑 **Windows Release** 工作流。
 
 ## 快速开始
 
@@ -55,7 +57,7 @@ npm --prefix desktop install
 npm run desktop:dev
 ```
 
-全局热键默认 **Ctrl+Alt+N**。窗口内点 **Demo** 可跑可视化十秒路径。详见 [`desktop/README.md`](./desktop/README.md)。
+全局热键默认 **Ctrl+Alt+N**。窗口内：**File → Find…**（Ctrl+F）打开查找工作台；**File → Intent…** 直接进 Intent 页；**Help → Demo… / About**。详见 [`desktop/README.md`](./desktop/README.md)。
 
 ### 桌面（Linux，尽力而为）
 
@@ -86,7 +88,7 @@ npm run desktop:dev
 ## 架构要点
 
 ```
-desktop/ (Tauri UI · 虚滚编辑表面)
+desktop/ (Tauri UI · 虚滚编辑 · Find 工作台)
     │ invoke
     ▼
 src/ipc/          ← 唯一提案写入缝仍是 IntentService.accept
@@ -97,6 +99,7 @@ native/buffer-core (Rust / napi)  ← Buffer 逻辑文本真身；JS 默认只�
 ```
 
 - **真身**：Buffer 在 Rust 核心（逻辑文本 + Encoding/EOL）；壳与脚本默认只持切片 / 可见窗 / 采样。无 Workspace / Project。
+- **Find / Intent**：查找与 Intent 在同一工作台；命中高亮与 RegexDraft 不写 Buffer；落笔仍经 Preview → Accept。
 - **离线**：编辑器可无模型运行；离线 AI / 完整 Demo 需评测机预置本地模型。默认安装包**不**强制装箱大模型。
 
 ## 目录
@@ -105,6 +108,6 @@ native/buffer-core (Rust / napi)  ← Buffer 逻辑文本真身；JS 默认只�
 src/                 TS 合同层、CLI、IPC host
 native/buffer-core/  Rust Buffer 核心（napi）
 tests/               合同测试
-desktop/             Tauri 前端 + src-tauri（含虚滚编辑）
+desktop/             Tauri 前端 + src-tauri（虚滚编辑 + Find 工作台）
 scripts/             辅助安装与打包资源
 ```

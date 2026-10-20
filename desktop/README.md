@@ -2,7 +2,7 @@
 
 Windows-first 桌面壳：经 IPC 薄封装挂接仓库根目录的 `IntentService` / `EditorShell` / FindBar 等。**Accept 只走核心合同**，不另开写入路径。
 
-对应 Stage：**WUF-80**（`feature/wuf-80-tauri-shell`）。
+当前版本与安装包对齐：**v0.1.1**。
 
 ## 依赖
 
@@ -41,13 +41,15 @@ npm run demo:visual-ten-second
 ## 窗口内自测清单
 
 1. 启动后有一个 Untitled 标签；输入后标题出现 `*`
-2. **New** 开第二标签；点击切换
-3. Path 栏 **Open** / **Save**（未命名走另存）
-4. 干净 Untitled **Close** 无提示；脏则确认
-5. **Ctrl+Alt+N**（全局）→ 聚焦并新建 Untitled，旧标签保留
-6. Intent（如 `uppercase`）→ **Preview** → 看 diff + Cost → **Accept** / **Reject**；Accept 后 **Undo**
-7. 打开 **Cloud path** → Preview 出现 Outbound 提示
-8. **Demo** → 粘贴 `hello demo` → 预览 → Accept（无本地模型时 AI 失败有指引，编辑器仍可用）
+2. **File → New**（Ctrl+N）开第二标签；点击切换；**Ctrl+W** 关标签（脏则三路确认）
+3. **File → Open… / Save / Save As…**（Ctrl+O / S / Shift+S）
+4. 编辑区占满视口；长文可纵向滚、长行可横向滚；左侧 **行号 gutter** 横向钉左
+5. **Ctrl+G** 跳行弹层：Enter 跳转 / Esc 关闭
+6. **Ctrl+F** 打开 Find 工作台（居中；标题栏可拖）；切换 **查找 / 替换 / Intent** 页签
+7. Intent 页：自然语言或手改 pattern → 命中高亮（不写 Buffer）→ Preview → Accept；Actions 列表在同一页
+8. **Help → Demo…**：粘贴 `hello demo` → 预览 → Accept（无本地模型时 AI 失败有指引，编辑器仍可用）
+9. **Help → About**：产品名与版本（应与安装包一致）
+10. **Ctrl+Alt+N**（全局）→ 聚焦并新建 Untitled，旧标签保留
 
 ## 打包与发布
 
@@ -73,6 +75,7 @@ npm run desktop:build
 | UI | Host / 核心 |
 | --- | --- |
 | 标签 / 编辑 / 打开保存 | `EditorShell.*` |
+| Find 工作台（查找 / 替换 / Intent） | `find` · `preview_replace` · `replace_accept` · `apply_draft` |
 | Intent Preview / Accept / Undo | `IntentService.parse` · `preview` · `accept` · `undo` |
 | Save as Action / 列表再跑·改名·删 | `ActionService.*`（经 IPC；落笔仍走 `accept` / `reject`） |
 | 全局热键 | OS shortcut → `evoke` + `hotkey-evoke` 事件 |
