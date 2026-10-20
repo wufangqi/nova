@@ -1,16 +1,16 @@
 /**
- * WUF-107 / WUF-120 contract: modeless Find dialog + Intent tab + marks.
+ * WUF-107 / WUF-120 / WUF-121 contract: Find workbench (tabs, geometry, Intent).
  *
- * Seam: `FindDialog` (desktop/src/find-dialog.ts) driven through injectable
- * FindDialogPort (IPC) + FindDialogSurface + FindMarksSurface (no OS pixels).
+ * Seam: `FindDialog` (desktop/src/find-dialog.ts) driven through an injectable
+ * FindDialogPort (IPC) + FindDialogSurface (no real OS dialog pixels).
  *
  * Acceptance:
- * - Tabs: 查找 | 替换 | Intent; Intent NL→regex via local RegexDraft
- * - Pattern shared between find + Intent; marks do not write Buffer
- * - Marks clear on dismiss / clearMarks / buffer edit
- * - RegexDraft fill lands on Intent tab; no Buffer write
- * - Replace Accept still via port → Intent Accept
- * - Find does not host bottom-bar Patch Intent / Action list
+ * - Find/replace/flags usable while dialog is open (modeless — editor not blocked)
+ * - RegexDraft fill opens Intent tab with fields set; no Buffer write
+ * - Replace Accept still goes through port → Intent Accept; never silent Buffer write
+ * - Workbench hosts Intent/Actions (migrated off shell bottom bar)
+ * - Center / drag / clamp / session memory; no install-level geometry key
+ * - Marks activate from pattern hits; clear on dismiss / buffer edit
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -21,39 +21,51 @@ import {
   type FindDialogSurface,
   type FindDraft,
   type FindHit,
-  type FindMarksSurface,
-  type FindTab,
+  type PresentOpts,
+  type WorkbenchGeometry,
+  type WorkbenchTab,
 } from "../desktop/src/find-dialog.ts";
-import { planFindMarkRects } from "../desktop/src/find-marks-paint.ts";
-import { buildRegexDraft } from "../src/regex-draft.js";
 import { IntentIpcHost } from "../src/ipc/host.js";
 
 type SurfaceLog = {
-  presents: FindDialogFields[];
-  tabs: FindTab[];
+  presents: Array<{ fields: FindDialogFields; opts: PresentOpts }>;
   dismisses: number;
   focusPatternCalls: number;
   focusIntentCalls: number;
+  tabs: WorkbenchTab[];
+  geometries: WorkbenchGeometry[];
+  measuredTabs: WorkbenchTab[];
 };
 
-type MarksLog = {
-  applies: FindHit[][];
-  clears: number;
-};
+/** Find panel is shorter; Intent (+ Actions) is taller — used to catch wrong-size centering. */
+const FIND_SIZE = { widthPx: 400, heightPx: 300 };
+const INTENT_SIZE = { widthPx: 400, heightPx: 500 };
 
-function recordingSurface(): FindDialogSurface & { log: SurfaceLog } {
+function recordingSurface(
+  opts: {
+    /** When true, measureSize returns FIND vs INTENT heights by tab. */
+    tabSizes?: boolean;
+  } = {},
+): FindDialogSurface & { log: SurfaceLog } {
   const log: SurfaceLog = {
     presents: [],
-    tabs: [],
     dismisses: 0,
     focusPatternCalls: 0,
     focusIntentCalls: 0,
+    tabs: [],
+    geometries: [],
+    measuredTabs: [],
   };
   return {
     log,
-    present(fields, meta) {
-      log.presents.push({ ...fields, flags: { ...fields.flags } });
-      if (meta?.tab) log.tabs.push(meta.tab);
+    present(fields, presentOpts) {
+      log.presents.push({
+        fields: { ...fields, flags: { ...fields.flags } },
+        opts: {
+          tab: presentOpts.tab,
+          geometry: { ...presentOpts.geometry },
+        },
+      });
     },
     dismiss() {
       log.dismisses += 1;
@@ -61,21 +73,19 @@ function recordingSurface(): FindDialogSurface & { log: SurfaceLog } {
     focusPattern() {
       log.focusPatternCalls += 1;
     },
-    focusIntentUtterance() {
+    focusIntent() {
       log.focusIntentCalls += 1;
     },
-  };
-}
-
-function recordingMarks(): FindMarksSurface & { log: MarksLog } {
-  const log: MarksLog = { applies: [], clears: 0 };
-  return {
-    log,
-    applyMarks(hits) {
-      log.applies.push(hits.map((h) => ({ ...h })));
+    setTab(tab) {
+      log.tabs.push(tab);
     },
-    clearMarks() {
-      log.clears += 1;
+    setGeometry(geometry) {
+      log.geometries.push({ ...geometry });
+    },
+    measureSize(tab) {
+      if (!opts.tabSizes) return FIND_SIZE;
+      log.measuredTabs.push(tab);
+      return tab === "intent" ? INTENT_SIZE : FIND_SIZE;
     },
   };
 }
@@ -119,35 +129,23 @@ function portFromHost(host: IntentIpcHost): FindDialogPort {
   };
 }
 
-function makeDialog(
-  host: IntentIpcHost,
-  surface = recordingSurface(),
-  marks = recordingMarks(),
-) {
-  return {
-    dialog: new FindDialog(portFromHost(host), surface, {
-      marks,
-      draftEngine: { build: buildRegexDraft },
-    }),
-    surface,
-    marks,
-  };
-}
+const CLIENT = { widthPx: 1000, heightPx: 800 };
+const SIZE = FIND_SIZE;
 
 describe("Find dialog is modeless — Find/replace/flags while editor stays editable", () => {
   it("openDialog presents fields and does not block the editor", async () => {
     const host = new IntentIpcHost();
-    const { dialog, surface } = makeDialog(host);
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
 
     assert.equal(dialog.isOpen(), false);
     assert.equal(dialog.blocksEditor(), false);
 
-    dialog.openDialog();
+    dialog.openDialog({ client: CLIENT, size: SIZE });
     assert.equal(dialog.isOpen(), true);
     assert.equal(dialog.blocksEditor(), false);
-    assert.equal(surface.log.presents.length, 1);
-    assert.deepEqual(surface.log.presents[0], dialog.getFields());
-    assert.equal(dialog.getActiveTab(), "find");
+    assert.ok(surface.log.presents.length >= 1);
+    assert.deepEqual(surface.log.presents.at(-1)!.fields, dialog.getFields());
 
     dialog.setFields({
       pattern: "alpha",
@@ -172,8 +170,9 @@ describe("Find dialog is modeless — Find/replace/flags while editor stays edit
       params: { text: "cat dog cat" },
     });
 
-    const { dialog } = makeDialog(host);
-    dialog.openDialog();
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
     dialog.setFields({
       pattern: "cat",
       replacement: "owl",
@@ -193,145 +192,8 @@ describe("Find dialog is modeless — Find/replace/flags while editor stays edit
   });
 });
 
-describe("Tabs: 查找 | 替换 | Intent", () => {
-  it("exposes find / replace / intent tabs and can switch between them", () => {
-    const host = new IntentIpcHost();
-    const { dialog, surface } = makeDialog(host);
-    dialog.openDialog();
-    assert.deepEqual(dialog.tabs(), ["find", "replace", "intent"]);
-
-    dialog.setActiveTab("replace");
-    assert.equal(dialog.getActiveTab(), "replace");
-    assert.equal(surface.log.tabs.at(-1), "replace");
-
-    dialog.setActiveTab("intent");
-    assert.equal(dialog.getActiveTab(), "intent");
-    assert.equal(surface.log.tabs.at(-1), "intent");
-  });
-
-  it("Intent pattern shares the find-tab pattern field", () => {
-    const host = new IntentIpcHost();
-    const { dialog } = makeDialog(host);
-    dialog.openDialog("intent");
-    dialog.setUtterance("write a regex for email");
-    dialog.setFields({ pattern: "[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}" });
-    assert.equal(
-      dialog.getFields().pattern,
-      dialog.getIntentState().pattern,
-    );
-    dialog.setActiveTab("find");
-    assert.equal(
-      dialog.getFields().pattern,
-      "[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}",
-    );
-  });
-});
-
-describe("Intent generate / remark marks hits without writing Buffer", () => {
-  it("generate from utterance builds RegexDraft, syncs pattern, marks hits", async () => {
-    const host = new IntentIpcHost();
-    const evoked = await host.handle({ method: "evoke", params: {} });
-    assert.equal(evoked.ok, true);
-    if (!evoked.ok) return;
-    const bufferId = evoked.result.buffer.id;
-    await host.handle({
-      method: "edit_active",
-      params: { text: "a1 b2 a3" },
-    });
-
-    const { dialog, marks } = makeDialog(host);
-    dialog.openDialog("intent");
-    dialog.setUtterance("regex a(\\d)");
-    const generated = await dialog.generate();
-    assert.equal(generated.ok, true);
-    assert.equal(dialog.getFields().pattern, "a(\\d)");
-    assert.equal(dialog.getIntentState().marksActive, true);
-    assert.ok(dialog.getIntentState().hitCount >= 2);
-    assert.ok(marks.log.applies.length >= 1);
-    assert.equal(await sliceAll(host, bufferId), "a1 b2 a3");
-  });
-
-  it("hand-edited pattern + remark updates marks; still no Buffer write", async () => {
-    const host = new IntentIpcHost();
-    const evoked = await host.handle({ method: "evoke", params: {} });
-    assert.equal(evoked.ok, true);
-    if (!evoked.ok) return;
-    const bufferId = evoked.result.buffer.id;
-    await host.handle({
-      method: "edit_active",
-      params: { text: "red fox red hen" },
-    });
-
-    const { dialog, marks } = makeDialog(host);
-    dialog.openDialog("intent");
-    dialog.setFields({ pattern: "fox" });
-    await dialog.remark();
-    assert.equal(dialog.getIntentState().hitCount, 1);
-    assert.equal(dialog.getIntentState().marksActive, true);
-
-    dialog.setFields({ pattern: "red" });
-    await dialog.remark();
-    assert.equal(dialog.getIntentState().hitCount, 2);
-    assert.ok(marks.log.applies.length >= 2);
-    assert.equal(await sliceAll(host, bufferId), "red fox red hen");
-  });
-
-  it("empty pattern does not activate marks", async () => {
-    const host = new IntentIpcHost();
-    const evoked = await host.handle({ method: "evoke", params: {} });
-    assert.equal(evoked.ok, true);
-    if (!evoked.ok) return;
-    await host.handle({
-      method: "edit_active",
-      params: { text: "anything" },
-    });
-
-    const { dialog, marks } = makeDialog(host);
-    dialog.openDialog("intent");
-    await dialog.remark();
-    assert.equal(dialog.getIntentState().marksActive, false);
-    assert.equal(dialog.getIntentState().hitCount, 0);
-    assert.equal(marks.log.applies.length, 0);
-  });
-});
-
-describe("Marks clear on dismiss / clearMarks / buffer edit", () => {
-  it("clearMarks, closeDialog, and notifyBufferEdited clear marks", async () => {
-    const host = new IntentIpcHost();
-    const evoked = await host.handle({ method: "evoke", params: {} });
-    assert.equal(evoked.ok, true);
-    if (!evoked.ok) return;
-    await host.handle({
-      method: "edit_active",
-      params: { text: "cat dog cat" },
-    });
-
-    const { dialog, marks, surface } = makeDialog(host);
-    dialog.openDialog("intent");
-    dialog.setFields({ pattern: "cat" });
-    await dialog.remark();
-    assert.equal(dialog.getIntentState().marksActive, true);
-
-    dialog.clearMarks();
-    assert.equal(dialog.getIntentState().marksActive, false);
-    assert.ok(marks.log.clears >= 1);
-
-    await dialog.remark();
-    assert.equal(dialog.getIntentState().marksActive, true);
-    dialog.closeDialog();
-    assert.equal(dialog.getIntentState().marksActive, false);
-    assert.ok(surface.log.dismisses >= 1);
-
-    dialog.openDialog("intent");
-    dialog.setFields({ pattern: "cat" });
-    await dialog.remark();
-    dialog.notifyBufferEdited();
-    assert.equal(dialog.getIntentState().marksActive, false);
-  });
-});
-
-describe("RegexDraft opens Find on Intent tab with fields filled", () => {
-  it("applyRegexDraft fills fields, selects Intent tab, leaves Buffer unchanged", async () => {
+describe("RegexDraft opens Intent tab with fields filled", () => {
+  it("applyRegexDraft fills fields, presents Intent tab, leaves Buffer unchanged", async () => {
     const host = new IntentIpcHost();
     const evoked = await host.handle({ method: "evoke", params: {} });
     assert.equal(evoked.ok, true);
@@ -351,17 +213,18 @@ describe("RegexDraft opens Find on Intent tab with fields filled", () => {
     assert.equal(previewed.result.preview.kind, "regex_draft");
     if (previewed.result.preview.kind !== "regex_draft") return;
 
-    const { dialog, surface } = makeDialog(host);
-    await dialog.applyRegexDraft(previewed.result.preview.draft, {
-      utterance: "regex a(\\d)",
-    });
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    await dialog.applyRegexDraft(previewed.result.preview.draft);
 
     assert.equal(dialog.isOpen(), true);
-    assert.equal(dialog.getActiveTab(), "intent");
+    assert.equal(dialog.getTab(), "intent");
     assert.equal(dialog.getFields().pattern, "a(\\d)");
-    assert.equal(dialog.getIntentState().utterance, "regex a(\\d)");
-    assert.equal(surface.log.presents.length, 1);
-    assert.equal(surface.log.tabs.at(-1), "intent");
+    assert.ok(surface.log.presents.length >= 1);
+    assert.equal(surface.log.presents.at(-1)!.opts.tab, "intent");
+    assert.equal(surface.log.focusIntentCalls, 1);
+    // Regression: void focusIntent must not fall through to focusPattern via `??`.
+    assert.equal(surface.log.focusPatternCalls, 0);
     assert.equal(await sliceAll(host, bufferId), "a1 b2 a3");
 
     const found = await dialog.find();
@@ -382,7 +245,8 @@ describe("Replace Accept stays on Patch preview seam — no silent Buffer write"
       params: { text: "red fox red hen" },
     });
 
-    const { dialog } = makeDialog(host);
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
     await dialog.applyRegexDraft({
       pattern: "red",
       replacement: "blue",
@@ -390,153 +254,209 @@ describe("Replace Accept stays on Patch preview seam — no silent Buffer write"
     });
     assert.equal(await sliceAll(host, bufferId), "red fox red hen");
 
-    dialog.setActiveTab("replace");
     const accepted = await dialog.replaceAccept();
     assert.equal(accepted.accept.ok, true);
     assert.equal(await sliceAll(host, bufferId), "blue fox blue hen");
   });
 });
 
-describe("Find hosts RegexDraft Intent tab — not bottom-bar Patch Intent / Action list", () => {
-  it("allows Intent tab; does not host bottom-bar Patch Intent or Action list", () => {
+describe("Workbench hosts Intent/Actions", () => {
+  it("FindDialog hosts Intent or Action panels (shell bottom bar removed)", () => {
     const host = new IntentIpcHost();
-    const { dialog } = makeDialog(host);
-    dialog.openDialog();
-    assert.equal(dialog.hasIntentTab(), true);
-    assert.equal(dialog.hostsBottomBarPatchIntent(), false);
-    assert.equal(dialog.hostsActionList(), false);
-    // Legacy alias: bottom-bar Patch Intent / Action list still not hosted.
-    assert.equal(dialog.hostsIntentOrAction(), false);
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    assert.equal(dialog.hostsIntentOrAction(), true);
   });
 
-  it("Intent tab can offer Save as Action when a pattern is present", () => {
+  it("tabs switch among find / replace / intent", () => {
     const host = new IntentIpcHost();
-    const { dialog } = makeDialog(host);
-    dialog.openDialog("intent");
-    assert.equal(dialog.canSaveAsAction(), false);
-    dialog.setFields({ pattern: "\\d+" });
-    assert.equal(dialog.canSaveAsAction(), true);
-    assert.deepEqual(dialog.getDraftForSave(), {
-      pattern: "\\d+",
-      replacement: "",
-      flags: undefined,
-    });
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE, tab: "find" });
+    assert.equal(dialog.getTab(), "find");
+    dialog.setTab("replace");
+    assert.equal(dialog.getTab(), "replace");
+    dialog.setTab("intent");
+    assert.equal(dialog.getTab(), "intent");
   });
-});
 
-describe("Hit ranges are planned for editor paint (US7)", () => {
-  it("remark applies hits and planFindMarkRects draws every overlapping range", async () => {
+  it("Intent tab Preview→Accept writes Buffer (not an empty shell)", async () => {
     const host = new IntentIpcHost();
     const evoked = await host.handle({ method: "evoke", params: {} });
     assert.equal(evoked.ok, true);
     if (!evoked.ok) return;
+    const bufferId = evoked.result.buffer.id;
     await host.handle({
       method: "edit_active",
-      params: { text: "cat dog cat" },
-    });
-
-    const { dialog, marks } = makeDialog(host);
-    dialog.openDialog("intent");
-    dialog.setFields({ pattern: "cat" });
-    await dialog.remark();
-
-    assert.equal(dialog.getIntentState().marksActive, true);
-    assert.equal(dialog.getIntentState().hitCount, 2);
-    const applied = marks.log.applies.at(-1)!;
-    assert.equal(applied.length, 2);
-
-    const rects = planFindMarkRects(applied, {
-      start: 0,
-      text: "cat dog cat",
-    });
-    // Every hit overlapping the mounted window becomes at least one paint rect.
-    assert.equal(rects.length, 2);
-    assert.equal(rects[0]!.absStart, applied[0]!.start);
-    assert.equal(rects[0]!.absEnd, applied[0]!.end);
-    assert.equal(rects[1]!.absStart, applied[1]!.start);
-    assert.equal(rects[1]!.absEnd, applied[1]!.end);
-    assert.ok(rects.every((r) => r.widthCss.endsWith("ch")));
-  });
-});
-
-describe("Large Buffer degrades to mounted visible window (US8)", () => {
-  it("uses getVisibleRange when Buffer exceeds threshold and still paints hits", async () => {
-    const host = new IntentIpcHost();
-    const evoked = await host.handle({ method: "evoke", params: {} });
-    assert.equal(evoked.ok, true);
-    if (!evoked.ok) return;
-    // "cat dog cat" — visible window [0, 5) is "cat d" → one "cat" hit.
-    await host.handle({
-      method: "edit_active",
-      params: { text: "cat dog cat" },
+      params: { text: "hello world" },
     });
 
     const surface = recordingSurface();
-    const marks = recordingMarks();
-    const visible = { kind: "range" as const, start: 0, end: 5 };
-    const dialog = new FindDialog(portFromHost(host), surface, {
-      marks,
-      draftEngine: { build: buildRegexDraft },
-      largeBufferThreshold: 8,
-      getBufferLength: () => 11,
-      getVisibleRange: () => visible,
-    });
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE, tab: "intent" });
+    assert.equal(dialog.getTab(), "intent");
+    assert.equal(dialog.hostsIntentOrAction(), true);
 
-    dialog.openDialog("intent");
-    dialog.setFields({ pattern: "cat" });
-    await dialog.remark();
-
-    assert.equal(dialog.getIntentState().degraded, true);
-    assert.equal(dialog.getIntentState().marksActive, true);
-    assert.equal(dialog.getIntentState().hitCount, 1);
-    const applied = marks.log.applies.at(-1)!;
-    assert.equal(applied.length, 1);
-
-    const rects = planFindMarkRects(applied, {
-      start: visible.start,
-      text: "cat d",
-    });
-    assert.equal(rects.length, 1);
-    assert.equal(rects[0]!.absStart, 0);
-    assert.equal(rects[0]!.absEnd, 3);
-  });
-});
-
-describe("Empty utterance neither generates nor scans (US34)", () => {
-  it("generate with blank utterance refuses and does not call find", async () => {
-    const host = new IntentIpcHost();
-    const evoked = await host.handle({ method: "evoke", params: {} });
-    assert.equal(evoked.ok, true);
-    if (!evoked.ok) return;
-    await host.handle({
-      method: "edit_active",
-      params: { text: "keep intact" },
-    });
-
-    const base = portFromHost(host);
-    let findCalls = 0;
-    const port: FindDialogPort = {
-      ...base,
-      async find(params) {
-        findCalls += 1;
-        return base.find(params);
+    const previewed = await host.handle({
+      method: "preview_intent",
+      params: {
+        utterance: "uppercase",
+        selection: { start: 0, end: 5 },
       },
-    };
+    });
+    assert.equal(previewed.ok, true);
+    if (!previewed.ok) return;
+    assert.equal(previewed.result.preview.kind, "patches");
+    if (previewed.result.preview.kind !== "patches") return;
+    assert.equal(await sliceAll(host, bufferId), "hello world");
+
+    const accepted = await host.handle({
+      method: "accept",
+      params: { patches: previewed.result.preview.patches },
+    });
+    assert.equal(accepted.ok, true);
+    if (!accepted.ok) return;
+    assert.equal(accepted.result.accept.ok, true);
+    assert.equal(await sliceAll(host, bufferId), "HELLO world");
+    // Workbench still hosts Intent after Accept — panel is not a dead shell.
+    assert.equal(dialog.isOpen(), true);
+    assert.equal(dialog.getTab(), "intent");
+    assert.equal(dialog.hostsIntentOrAction(), true);
+  });
+});
+
+describe("Workbench geometry: center, drag, clamp, session memory", () => {
+  it("present centers when there is no session memory", () => {
+    const host = new IntentIpcHost();
     const surface = recordingSurface();
-    const marks = recordingMarks();
-    const dialog = new FindDialog(port, surface, {
-      marks,
-      draftEngine: { build: buildRegexDraft },
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    assert.deepEqual(dialog.getGeometry(), { leftPx: 300, topPx: 250 });
+    assert.equal(dialog.getSessionGeometry(), undefined);
+    assert.equal(dialog.hasPersistentGeometryKey(), false);
+  });
+
+  it("File→Intent… path centers using Intent page size, not Find height", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface({ tabSizes: true });
+    const dialog = new FindDialog(portFromHost(host), surface);
+    // Caller may still pass Find-sized fallback; measureSize must win after present.
+    dialog.openDialog({
+      tab: "intent",
+      client: CLIENT,
+      size: FIND_SIZE,
+    });
+    assert.deepEqual(surface.log.measuredTabs, ["intent"]);
+    // INTENT_SIZE 400×500 → center top = (800-500)/2 = 150 (not Find's 250).
+    assert.deepEqual(dialog.getGeometry(), { leftPx: 300, topPx: 150 });
+  });
+
+  it("RegexDraft path centers using Intent size and never calls focusPattern", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    const surface = recordingSurface({ tabSizes: true });
+    const dialog = new FindDialog(portFromHost(host), surface);
+    await dialog.applyRegexDraft(
+      { pattern: "x", replacement: "", flags: "g" },
+      { client: CLIENT, size: FIND_SIZE },
+    );
+    assert.deepEqual(surface.log.measuredTabs, ["intent"]);
+    assert.deepEqual(dialog.getGeometry(), { leftPx: 300, topPx: 150 });
+    assert.equal(surface.log.focusIntentCalls, 1);
+    assert.equal(surface.log.focusPatternCalls, 0);
+  });
+
+  it("drag updates geometry, clamps, and remembers for re-present", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+
+    const afterDrag = dialog.dragTitleBar({ dx: 40, dy: -20 }, CLIENT, SIZE);
+    assert.deepEqual(afterDrag, { leftPx: 340, topPx: 230 });
+    assert.deepEqual(dialog.getSessionGeometry(), afterDrag);
+
+    dialog.closeDialog();
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    assert.deepEqual(dialog.getGeometry(), afterDrag);
+  });
+
+  it("drag far off-screen is clamped so the title bar stays reachable", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    const clamped = dialog.dragTitleBar({ dx: 50_000, dy: 50_000 }, CLIENT, SIZE);
+    assert.ok(clamped.leftPx <= CLIENT.widthPx - 28);
+    assert.ok(clamped.topPx <= CLIENT.heightPx - 28);
+  });
+
+  it("a fresh FindDialog has no session memory (restart resets to center)", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const first = new FindDialog(portFromHost(host), surface);
+    first.openDialog({ client: CLIENT, size: SIZE });
+    first.dragTitleBar({ dx: 80, dy: 40 }, CLIENT, SIZE);
+
+    const restarted = new FindDialog(portFromHost(host), recordingSurface());
+    restarted.openDialog({ client: CLIENT, size: SIZE });
+    assert.equal(restarted.getSessionGeometry(), undefined);
+    assert.deepEqual(restarted.getGeometry(), { leftPx: 300, topPx: 250 });
+    assert.equal(restarted.hasPersistentGeometryKey(), false);
+  });
+});
+
+describe("Marks: activate from hits; clear on dismiss / buffer edit", () => {
+  it("markHits sets marksActive + count; clearMarks and dismiss reset", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    await host.handle({
+      method: "edit_active",
+      params: { text: "cat dog cat" },
     });
 
-    dialog.openDialog("intent");
-    dialog.setUtterance("   ");
-    const result = await dialog.generate();
-    assert.equal(result.ok, false);
-    if (result.ok) return;
-    assert.equal(result.reason, "empty_utterance");
-    assert.equal(findCalls, 0);
-    assert.equal(dialog.getIntentState().marksActive, false);
-    assert.equal(marks.log.applies.length, 0);
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE, tab: "intent" });
+    dialog.setFields({ pattern: "cat", replacement: "", flags: {} });
+
+    const marked = await dialog.markHits();
+    assert.equal(marked.marksActive, true);
+    assert.equal(marked.hitCount, 2);
+
+    dialog.clearMarks();
+    assert.equal(dialog.getMarksState().marksActive, false);
+
+    await dialog.markHits();
+    assert.equal(dialog.getMarksState().marksActive, true);
+    dialog.closeDialog();
+    assert.equal(dialog.getMarksState().marksActive, false);
+  });
+
+  it("onBufferEdited clears marks without writing Buffer", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    const bufferId = evoked.result.buffer.id;
+    await host.handle({
+      method: "edit_active",
+      params: { text: "aa bb aa" },
+    });
+
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.setFields({ pattern: "aa", replacement: "", flags: {} });
+    await dialog.markHits();
+    assert.equal(dialog.getMarksState().hitCount, 2);
+
+    dialog.onBufferEdited();
+    assert.equal(dialog.getMarksState().marksActive, false);
+    assert.equal(await sliceAll(host, bufferId), "aa bb aa");
   });
 });

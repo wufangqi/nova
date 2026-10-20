@@ -42,6 +42,9 @@ function recordingHandlers(): ShellChromeHandlers & {
     find: () => {
       calls.push("find");
     },
+    intent: () => {
+      calls.push("intent");
+    },
     demo: () => {
       calls.push("demo");
     },
@@ -56,9 +59,16 @@ function recordingHandlers(): ShellChromeHandlers & {
 }
 
 describe("File menu + shortcuts (no toolbar table)", () => {
-  it("File menu lists New / Open / Save / Save As / Find", () => {
+  it("File menu lists New / Open / Save / Save As / Find / Intent", () => {
     const ids = SHELL_FILE_MENU_ITEMS.map((item) => item.id);
-    assert.deepEqual(ids, ["new", "open", "save", "save_as", "find"]);
+    assert.deepEqual(ids, [
+      "new",
+      "open",
+      "save",
+      "save_as",
+      "find",
+      "intent",
+    ]);
   });
 
   it("File menu does not include Close", () => {
@@ -70,7 +80,7 @@ describe("File menu + shortcuts (no toolbar table)", () => {
     );
   });
 
-  it("menu and shortcut invoke the same handler for each file action", () => {
+  it("menu and shortcut invoke the same handler for each shortcut file action", () => {
     const actions: ShellFileAction[] = [
       "new",
       "open",
@@ -82,13 +92,23 @@ describe("File menu + shortcuts (no toolbar table)", () => {
       const handlers = recordingHandlers();
       runShellAction(action, handlers); // menu path
       const shortcut = SHELL_FILE_MENU_ITEMS.find((i) => i.id === action)!;
+      assert.ok(shortcut.accelerator, `expected accelerator for ${action}`);
       const resolved = resolveShellShortcut(
-        parseAccelerator(shortcut.accelerator),
+        parseAccelerator(shortcut.accelerator!),
       );
       assert.equal(resolved, action);
       if (resolved) runShellAction(resolved, handlers); // shortcut path
       assert.deepEqual(handlers.calls, [action, action]);
     }
+  });
+
+  it("Intent… is menu-only and opens via the shared handler table", () => {
+    const handlers = recordingHandlers();
+    const item = SHELL_FILE_MENU_ITEMS.find((i) => i.id === "intent")!;
+    assert.equal(item.label, "Intent…");
+    assert.equal(item.accelerator, undefined);
+    runShellAction("intent", handlers);
+    assert.deepEqual(handlers.calls, ["intent"]);
   });
 });
 

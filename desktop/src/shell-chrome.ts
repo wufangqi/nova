@@ -7,7 +7,13 @@
  * No File → Close. Encoding / Language menus remain deferred.
  */
 
-export type ShellFileAction = "new" | "open" | "save" | "save_as" | "find";
+export type ShellFileAction =
+  | "new"
+  | "open"
+  | "save"
+  | "save_as"
+  | "find"
+  | "intent";
 
 export type ShellHelpAction = "demo" | "about";
 
@@ -22,7 +28,8 @@ export type ShellChromeAction =
 export type ShellFileMenuItem = {
   id: ShellFileAction;
   label: string;
-  accelerator: string;
+  /** Absent when the item is menu-only (no shared shortcut). */
+  accelerator?: string;
 };
 
 export type ShellHelpMenuItem = {
@@ -31,13 +38,15 @@ export type ShellHelpMenuItem = {
   accelerator?: string;
 };
 
-/** File menu entries — file ops only; never Close. */
+/** File menu entries — file ops + Find/Intent workbench; never Close. */
 export const SHELL_FILE_MENU_ITEMS: readonly ShellFileMenuItem[] = [
   { id: "new", label: "New", accelerator: "Ctrl+N" },
   { id: "open", label: "Open…", accelerator: "Ctrl+O" },
   { id: "save", label: "Save", accelerator: "Ctrl+S" },
   { id: "save_as", label: "Save As…", accelerator: "Ctrl+Shift+S" },
   { id: "find", label: "Find…", accelerator: "Ctrl+F" },
+  /** Opens the Find workbench on the Intent tab (bottom bar removed). */
+  { id: "intent", label: "Intent…" },
 ] as const;
 
 /** Help menu — Demo + About; Demo is not on the File menu. */

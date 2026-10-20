@@ -21,18 +21,17 @@ import {
   FindDialog,
   type FindDialogFields,
   type FindDialogPort,
-  type FindDialogPresentMeta,
   type FindDialogSurface,
   type FindHit as FindMarkHit,
   type FindMarksSurface,
-  type FindTab,
+  type WorkbenchGeometry,
+  type WorkbenchTab,
 } from "./find-dialog.ts";
 import {
   clearFindMarkLayer,
   paintFindMarkLayer,
   planFindMarkRects,
 } from "./find-marks-paint.ts";
-import { buildRegexDraft } from "../../src/regex-draft.ts";
 import { APP_PRODUCT_NAME, APP_VERSION } from "./app-meta.ts";
 import { GotoLinePopup, type GotoLinePopupSurface } from "./goto-line-popup.ts";
 import { formatPatchDiffAsync, type Patch } from "./patch-diff.ts";
@@ -445,100 +444,137 @@ const findPort: FindDialogPort = {
 
 function writeFindFieldsToDom(fields: FindDialogFields) {
   el<HTMLInputElement>("find-pattern").value = fields.pattern;
-  el<HTMLInputElement>("find-replace-pattern").value = fields.pattern;
-  el<HTMLInputElement>("find-intent-pattern").value = fields.pattern;
   el<HTMLInputElement>("find-replacement").value = fields.replacement;
-  for (const id of ["find-flag-i", "find-replace-flag-i"] as const) {
-    el<HTMLInputElement>(id).checked = !!fields.flags.i;
-  }
-  for (const id of ["find-flag-m", "find-replace-flag-m"] as const) {
-    el<HTMLInputElement>(id).checked = !!fields.flags.m;
-  }
-  for (const id of ["find-flag-s", "find-replace-flag-s"] as const) {
-    el<HTMLInputElement>(id).checked = !!fields.flags.s;
+  el<HTMLInputElement>("find-flag-i").checked = !!fields.flags.i;
+  el<HTMLInputElement>("find-flag-m").checked = !!fields.flags.m;
+  el<HTMLInputElement>("find-flag-s").checked = !!fields.flags.s;
+  const intentPattern = document.getElementById("intent-pattern");
+  if (intentPattern instanceof HTMLInputElement) {
+    intentPattern.value = fields.pattern;
   }
 }
 
 function readFindFieldsFromDom(): FindDialogFields {
-  const tab = findDialog.getActiveTab();
-  const pattern =
-    tab === "intent"
-      ? el<HTMLInputElement>("find-intent-pattern").value
-      : tab === "replace"
-        ? el<HTMLInputElement>("find-replace-pattern").value
-        : el<HTMLInputElement>("find-pattern").value;
-  const flagI =
-    tab === "replace"
-      ? el<HTMLInputElement>("find-replace-flag-i").checked
-      : el<HTMLInputElement>("find-flag-i").checked;
-  const flagM =
-    tab === "replace"
-      ? el<HTMLInputElement>("find-replace-flag-m").checked
-      : el<HTMLInputElement>("find-flag-m").checked;
-  const flagS =
-    tab === "replace"
-      ? el<HTMLInputElement>("find-replace-flag-s").checked
-      : el<HTMLInputElement>("find-flag-s").checked;
   return {
-    pattern,
+    pattern: el<HTMLInputElement>("find-pattern").value,
     replacement: el<HTMLInputElement>("find-replacement").value,
     flags: {
-      i: flagI || undefined,
-      m: flagM || undefined,
-      s: flagS || undefined,
+      i: el<HTMLInputElement>("find-flag-i").checked || undefined,
+      m: el<HTMLInputElement>("find-flag-m").checked || undefined,
+      s: el<HTMLInputElement>("find-flag-s").checked || undefined,
     },
   };
 }
 
-function syncFindTabDom(tab: FindTab) {
-  for (const t of ["find", "replace", "intent"] as const) {
-    const btn = el<HTMLButtonElement>(`find-tab-${t}`);
-    btn.setAttribute("aria-selected", t === tab ? "true" : "false");
-    el<HTMLElement>(`find-pane-${t}`).hidden = t !== tab;
-  }
+function applyWorkbenchGeometry(geometry: WorkbenchGeometry) {
+  const dialog = el<HTMLElement>("find-dialog");
+  dialog.style.left = `${geometry.leftPx}px`;
+  dialog.style.top = `${geometry.topPx}px`;
+  dialog.style.right = "auto";
+  dialog.style.bottom = "auto";
 }
 
-function syncFindIntentDom(meta: FindDialogPresentMeta) {
-  el<HTMLInputElement>("find-intent-utterance").value = meta.intent.utterance;
-  const countEl = el<HTMLElement>("find-intent-hit-count");
-  countEl.textContent = meta.intent.degraded
-    ? `可见窗约 ${meta.intent.hitCount} 处命中`
-    : `${meta.intent.hitCount} 处命中`;
-  el<HTMLButtonElement>("find-intent-save-action").disabled =
-    !findDialog.canSaveAsAction();
-  const viewport = el<HTMLElement>("editor-viewport");
-  viewport.classList.toggle("find-marks-active", meta.intent.marksActive);
+function syncWorkbenchTabUi(tab: WorkbenchTab) {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".find-tab")) {
+    const selected = btn.dataset.tab === tab;
+    btn.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+  const findReplace = el<HTMLElement>("find-panel-find-replace");
+  const intent = el<HTMLElement>("find-panel-intent");
+  const showFindReplace = tab === "find" || tab === "replace";
+  findReplace.hidden = !showFindReplace;
+  intent.hidden = tab !== "intent";
+
+  const replacementField = el<HTMLElement>("find-replacement-field");
+  const previewBtn = el<HTMLButtonElement>("find-preview-replace");
+  const acceptBtn = el<HTMLButtonElement>("find-replace-accept");
+  const findBtn = el<HTMLButtonElement>("find-go");
+  const onReplace = tab === "replace";
+  replacementField.hidden = !onReplace;
+  previewBtn.hidden = !onReplace;
+  acceptBtn.hidden = !onReplace;
+  findBtn.hidden = onReplace;
+}
+
+function updateIntentHitCountLabel() {
+  const marks = findDialog.getMarksState();
+  const label = document.getElementById("intent-hit-count");
+  if (label) {
+    label.textContent = marks.degraded
+      ? `可见窗约 ${marks.hitCount} 处命中`
+      : `${marks.hitCount} hit${marks.hitCount === 1 ? "" : "s"}`;
+  }
+  el<HTMLElement>("editor-viewport").classList.toggle(
+    "find-marks-active",
+    marks.marksActive,
+  );
+}
+
+function workbenchClientSize(): { widthPx: number; heightPx: number } {
+  const app = document.querySelector(".app");
+  if (app instanceof HTMLElement) {
+    return { widthPx: app.clientWidth, heightPx: app.clientHeight };
+  }
+  return { widthPx: window.innerWidth, heightPx: window.innerHeight };
+}
+
+function workbenchDialogSize(): { widthPx: number; heightPx: number } {
+  const dialog = el<HTMLElement>("find-dialog");
+  // Hidden nodes report 0×0 — measure with a brief invisible reveal.
+  const wasHidden = dialog.hidden;
+  if (wasHidden) {
+    dialog.style.visibility = "hidden";
+    dialog.hidden = false;
+  }
+  const widthPx = dialog.offsetWidth || Math.min(576, window.innerWidth - 24);
+  const heightPx = dialog.offsetHeight || 420;
+  if (wasHidden) {
+    dialog.hidden = true;
+    dialog.style.visibility = "";
+  }
+  return { widthPx, heightPx };
+}
+
+/** Measure after the target tab is shown (Intent is taller than Find). */
+function measureWorkbenchSizeForTab(tab: WorkbenchTab): {
+  widthPx: number;
+  heightPx: number;
+} {
+  syncWorkbenchTabUi(tab);
+  return workbenchDialogSize();
 }
 
 const findSurface: FindDialogSurface = {
-  present(fields, meta) {
+  present(fields, opts) {
     writeFindFieldsToDom(fields);
-    if (meta) {
-      syncFindTabDom(meta.tab);
-      syncFindIntentDom(meta);
-    }
+    syncWorkbenchTabUi(opts.tab);
+    applyWorkbenchGeometry(opts.geometry);
     el<HTMLElement>("find-dialog").hidden = false;
+    updateIntentHitCountLabel();
   },
   dismiss() {
     el<HTMLElement>("find-dialog").hidden = true;
     el<HTMLElement>("editor-viewport").classList.remove("find-marks-active");
+    updateIntentHitCountLabel();
   },
   focusPattern() {
-    const tab = findDialog.getActiveTab();
-    const id =
-      tab === "intent"
-        ? "find-intent-pattern"
-        : tab === "replace"
-          ? "find-replace-pattern"
-          : "find-pattern";
-    const input = el<HTMLInputElement>(id);
+    const input = el<HTMLInputElement>("find-pattern");
     input.focus();
     input.select();
   },
-  focusIntentUtterance() {
-    const input = el<HTMLInputElement>("find-intent-utterance");
+  focusIntent() {
+    const input = el<HTMLInputElement>("intent-input");
     input.focus();
     input.select();
+  },
+  setTab(tab) {
+    syncWorkbenchTabUi(tab);
+  },
+  setGeometry(geometry) {
+    applyWorkbenchGeometry(geometry);
+  },
+  measureSize(tab) {
+    return measureWorkbenchSizeForTab(tab);
   },
 };
 
@@ -573,10 +609,11 @@ const findMarksSurface: FindMarksSurface = {
     repaintFindMarks();
     const first = hits[0];
     if (first) {
-      void virtualEditor.revealRange(first.start, first.end, first.line).then(() => {
-        // revealRange may remount the window — paint again for the new slice.
-        repaintFindMarks();
-      });
+      void virtualEditor
+        .revealRange(first.start, first.end, first.line)
+        .then(() => {
+          repaintFindMarks();
+        });
     }
   },
   clearMarks() {
@@ -592,7 +629,6 @@ const findMarksSurface: FindMarksSurface = {
 
 const findDialog = new FindDialog(findPort, findSurface, {
   marks: findMarksSurface,
-  draftEngine: { build: buildRegexDraft },
   getBufferLength: async () => {
     if (!activeId) return 0;
     try {
@@ -603,7 +639,6 @@ const findDialog = new FindDialog(findPort, findSurface, {
     }
   },
   getVisibleRange: () => {
-    // Real VirtualEditor mounted window (not caret ±N).
     try {
       return virtualEditor.mountedAbsRange();
     } catch {
@@ -930,18 +965,18 @@ function findScope():
 }
 
 function findFlags(): { i?: boolean; m?: boolean; s?: boolean } {
-  const fields = findDialog.getFields();
   return {
-    i: fields.flags.i || undefined,
-    m: fields.flags.m || undefined,
-    s: fields.flags.s || undefined,
+    i: el<HTMLInputElement>("find-flag-i").checked || undefined,
+    m: el<HTMLInputElement>("find-flag-m").checked || undefined,
+    s: el<HTMLInputElement>("find-flag-s").checked || undefined,
   };
 }
 
 function findParams(extra: { pattern?: string; replacement?: string } = {}) {
-  const fields = findDialog.getFields();
-  const pattern = extra.pattern ?? fields.pattern;
-  const replacement = extra.replacement ?? fields.replacement;
+  const pattern =
+    extra.pattern ?? el<HTMLInputElement>("find-pattern").value;
+  const replacement =
+    extra.replacement ?? el<HTMLInputElement>("find-replacement").value;
   return {
     pattern: pattern.length > 0 ? pattern : undefined,
     replacement: replacement.length > 0 ? replacement : undefined,
@@ -961,16 +996,17 @@ function clearFindHits() {
   hitsEl.replaceChildren();
 }
 
-async function fillFindBarFromDraft(
-  draft: {
-    pattern: string;
-    replacement?: string;
-    flags?: string;
-  },
-  utterance?: string,
-) {
-  // Opens Find on Intent tab; apply_draft stays on the IPC seam — no Buffer write.
-  await findDialog.applyRegexDraft(draft, { utterance });
+async function fillFindBarFromDraft(draft: {
+  pattern: string;
+  replacement?: string;
+  flags?: string;
+}) {
+  // Opens Intent tab; size measured after present (Intent height), not Find height.
+  await findDialog.applyRegexDraft(draft, {
+    client: workbenchClientSize(),
+  });
+  await findDialog.markHits();
+  updateIntentHitCountLabel();
 }
 
 function renderFindHits(hits: FindHit[], count: number) {
@@ -1356,19 +1392,18 @@ async function applyPreviewResult(
     return;
   }
 
-  // RegexDraft fills Find Intent tab only — never Accepts into Buffer.
+  // RegexDraft fills Find dialog only — never Accepts into Buffer.
   const draft = preview.draft;
-  const utterance = el<HTMLInputElement>("intent-input").value;
-  await fillFindBarFromDraft(draft, utterance);
+  await fillFindBarFromDraft(draft);
   clearFindHits();
   diffEl.hidden = false;
-  diffEl.textContent = `RegexDraft filled Find Intent tab: /${draft.pattern}/${draft.flags ?? ""}${
+  diffEl.textContent = `RegexDraft filled Find dialog: /${draft.pattern}/${draft.flags ?? ""}${
     draft.replacement !== undefined ? ` → ${JSON.stringify(draft.replacement)}` : ""
-  }\nBuffer unchanged — use Intent 标记 / Find / Preview replace / Replace Accept, or Save as Action.`;
+  }\nBuffer unchanged — use Find / Preview replace / Replace Accept, or Save as Action.`;
   setIntentActions({ accept: false, reject: true });
   setSaveAsActionEnabled(canOfferSaveAsAction("regex_draft"));
   setStatus(
-    "RegexDraft → Find Intent 标签（不写 Buffer）— 可标记命中或 Save as Action",
+    "RegexDraft → Find dialog (no Buffer write) — Save as Action to pin for reuse",
   );
 }
 
@@ -1439,46 +1474,6 @@ async function saveAsAction() {
       ? pendingPreviewId
       : null;
     const result = await actionPanel.save(idForSave);
-    if (result.ok) {
-      renderActionList(actionPanel.list());
-    }
-    setStatus(result.message);
-  } catch (err) {
-    setStatus(String(err));
-  }
-}
-
-/** Intent 标签内 Save as Action：先走 Preview 拿到 RegexDraft previewId，再钉 Action. */
-async function saveFindIntentAsAction() {
-  const draft = findDialog.getDraftForSave();
-  if (!draft) {
-    setStatus("请先生成或填写正则再 Save as Action");
-    return;
-  }
-  try {
-    findDialog.setUtterance(el<HTMLInputElement>("find-intent-utterance").value);
-    const utterance =
-      findDialog.getIntentState().utterance.trim() ||
-      `regex ${draft.pattern}`;
-    const previewed = await invoke<PreviewIntentResult>("preview_intent_cmd", {
-      utterance,
-    });
-    if (previewed.preview.kind !== "regex_draft") {
-      setStatus("当前意图无法保存为 Action（需要 RegexDraft）");
-      return;
-    }
-    pendingPreviewId = previewed.preview.previewId;
-    pendingPreviewKind = "regex_draft";
-    // Keep Find fields on the hand-edited / generated pattern.
-    await findDialog.applyRegexDraft(
-      {
-        pattern: draft.pattern,
-        replacement: draft.replacement,
-        flags: draft.flags,
-      },
-      { utterance },
-    );
-    const result = await actionPanel.save(previewed.preview.previewId);
     if (result.ok) {
       renderActionList(actionPanel.list());
     }
@@ -1826,9 +1821,101 @@ async function selectSuggestion(suggestion: Suggestion) {
   }
 }
 
-function openFindChrome(): void {
+function openFindChrome(opts: { tab?: WorkbenchTab } = {}): void {
+  const tab = opts.tab ?? "find";
   findDialog.setFields(readFindFieldsFromDom());
-  findDialog.focusPattern();
+  // Do not pre-measure size here — openDialog presents the tab then measureSize.
+  findDialog.openDialog({
+    tab,
+    client: workbenchClientSize(),
+  });
+  if (tab === "intent") {
+    findDialog.focusIntent();
+  } else {
+    findDialog.focusPattern();
+  }
+}
+
+function mountFindWorkbenchChrome(): void {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".find-tab")) {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab as WorkbenchTab | undefined;
+      if (!tab) return;
+      findDialog.setFields(readFindFieldsFromDom());
+      findDialog.setTab(tab);
+    });
+  }
+
+  const chrome = el<HTMLElement>("find-dialog-chrome");
+  let pointerActive = false;
+  let dragging = false;
+  let lastPointer: { x: number; y: number } | null = null;
+  let pressOrigin: { x: number; y: number } | null = null;
+
+  chrome.addEventListener("pointerdown", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    if (target?.closest("#find-close")) return;
+    if (ev.button !== 0) return;
+    pointerActive = true;
+    dragging = false;
+    pressOrigin = { x: ev.clientX, y: ev.clientY };
+    lastPointer = { x: ev.clientX, y: ev.clientY };
+    chrome.setPointerCapture(ev.pointerId);
+  });
+  chrome.addEventListener("pointermove", (ev) => {
+    if (!pointerActive || !pressOrigin || !lastPointer) return;
+    if (!dragging) {
+      const totalDx = ev.clientX - pressOrigin.x;
+      const totalDy = ev.clientY - pressOrigin.y;
+      if (Math.hypot(totalDx, totalDy) < TITLE_DRAG_THRESHOLD_PX) return;
+      dragging = true;
+      chrome.classList.add("find-dialog-dragging");
+    }
+    const dx = ev.clientX - lastPointer.x;
+    const dy = ev.clientY - lastPointer.y;
+    lastPointer = { x: ev.clientX, y: ev.clientY };
+    findDialog.dragTitleBar(
+      { dx, dy },
+      workbenchClientSize(),
+      workbenchDialogSize(),
+    );
+  });
+  const endDrag = (ev: PointerEvent) => {
+    if (chrome.hasPointerCapture(ev.pointerId)) {
+      chrome.releasePointerCapture(ev.pointerId);
+    }
+    pointerActive = false;
+    dragging = false;
+    lastPointer = null;
+    pressOrigin = null;
+    chrome.classList.remove("find-dialog-dragging");
+  };
+  chrome.addEventListener("pointerup", endDrag);
+  chrome.addEventListener("pointercancel", endDrag);
+
+  el<HTMLButtonElement>("intent-mark").addEventListener("click", () => {
+    const pattern = el<HTMLInputElement>("intent-pattern").value;
+    el<HTMLInputElement>("find-pattern").value = pattern;
+    findDialog.setFields(readFindFieldsFromDom());
+    void findDialog.markHits().then((marks) => {
+      updateIntentHitCountLabel();
+      setStatus(
+        marks.marksActive
+          ? `Marked ${marks.hitCount} hit${marks.hitCount === 1 ? "" : "s"}`
+          : "No hits to mark",
+      );
+    });
+  });
+  el<HTMLButtonElement>("intent-clear-marks").addEventListener("click", () => {
+    findDialog.clearMarks();
+    updateIntentHitCountLabel();
+    setStatus("Marks cleared");
+  });
+  el<HTMLInputElement>("intent-pattern").addEventListener("change", () => {
+    el<HTMLInputElement>("find-pattern").value =
+      el<HTMLInputElement>("intent-pattern").value;
+    findDialog.setFields(readFindFieldsFromDom());
+  });
 }
 
 function closeChromeMenus(): void {
@@ -1938,7 +2025,8 @@ window.addEventListener("DOMContentLoaded", () => {
     open: () => openPath(),
     save: () => save(),
     save_as: () => saveAsPath(),
-    find: () => openFindChrome(),
+    find: () => openFindChrome({ tab: "find" }),
+    intent: () => openFindChrome({ tab: "intent" }),
     demo: () => runVisualDemo().catch((err) => setStatus(String(err))),
     about: () => openAboutDialog(),
     // Same three-way ClosePrompter path as the tab × button.
@@ -1947,6 +2035,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   mountShellMenus(shellHandlers);
   mountTitleChrome();
+  mountFindWorkbenchChrome();
 
   virtualEditor = new VirtualEditor(
     el("editor-viewport"),
@@ -1967,8 +2056,8 @@ window.addEventListener("DOMContentLoaded", () => {
         renderTabs(result.tabs);
         activeId = result.buffer.id;
         await syncTitleChrome(result.tabs.find((t) => t.active));
-        // Marks are ephemeral — Buffer edits must clear them (WUF-120).
-        findDialog.notifyBufferEdited();
+        findDialog.onBufferEdited();
+        updateIntentHitCountLabel();
         // Metrics refresh after VirtualEditor updates lineCount (see flushEdit);
         // also refresh here for length/caret when no further selection event fires.
         void refreshStatusMetrics();
@@ -2042,6 +2131,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (ev.key === "Escape" && findDialog.isOpen()) {
       ev.preventDefault();
       findDialog.closeDialog();
+      updateIntentHitCountLabel();
       return;
     }
     const shellAction = resolveShellShortcut(ev);
@@ -2086,14 +2176,8 @@ window.addEventListener("DOMContentLoaded", () => {
 
   el<HTMLButtonElement>("find-close").addEventListener("click", () => {
     findDialog.closeDialog();
+    updateIntentHitCountLabel();
   });
-  for (const tab of ["find", "replace", "intent"] as const) {
-    el<HTMLButtonElement>(`find-tab-${tab}`).addEventListener("click", () => {
-      findDialog.setFields(readFindFieldsFromDom());
-      findDialog.setUtterance(el<HTMLInputElement>("find-intent-utterance").value);
-      findDialog.setActiveTab(tab);
-    });
-  }
   el<HTMLButtonElement>("find-go").addEventListener("click", () => {
     findDialog.setFields(readFindFieldsFromDom());
     void runFind();
@@ -2111,58 +2195,6 @@ window.addEventListener("DOMContentLoaded", () => {
       ev.preventDefault();
       findDialog.setFields(readFindFieldsFromDom());
       void runFind();
-    }
-  });
-  el<HTMLButtonElement>("find-intent-generate").addEventListener("click", () => {
-    findDialog.setUtterance(el<HTMLInputElement>("find-intent-utterance").value);
-    findDialog.setFields(readFindFieldsFromDom());
-    void (async () => {
-      const result = await findDialog.generate();
-      if (!result.ok) {
-        setStatus(
-          result.reason === "empty_utterance"
-            ? "请先输入意图再生成"
-            : `生成失败：${result.reason}`,
-        );
-        return;
-      }
-      const intent = findDialog.getIntentState();
-      setStatus(
-        intent.marksActive
-          ? `已生成并标记 ${intent.hitCount} 处命中（未写 Buffer）`
-          : "已生成正则，无命中",
-      );
-    })();
-  });
-  el<HTMLButtonElement>("find-intent-remark").addEventListener("click", () => {
-    findDialog.setFields(readFindFieldsFromDom());
-    void (async () => {
-      await findDialog.remark();
-      const intent = findDialog.getIntentState();
-      setStatus(
-        intent.marksActive
-          ? `已按当前正则标记 ${intent.hitCount} 处命中（未写 Buffer）`
-          : "无命中或正则为空",
-      );
-    })();
-  });
-  el<HTMLButtonElement>("find-intent-clear-marks").addEventListener("click", () => {
-    findDialog.clearMarks();
-    setStatus("已清除命中标记");
-  });
-  el<HTMLButtonElement>("find-intent-save-action").addEventListener("click", () => {
-    void saveFindIntentAsAction();
-  });
-  el<HTMLInputElement>("find-intent-utterance").addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      el<HTMLButtonElement>("find-intent-generate").click();
-    }
-  });
-  el<HTMLInputElement>("find-intent-pattern").addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      el<HTMLButtonElement>("find-intent-remark").click();
     }
   });
 

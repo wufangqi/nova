@@ -1,24 +1,26 @@
 /**
- * WUF-107 / WUF-120 — modeless FindBar dialog for the desktop shell.
+ * WUF-107 / WUF-120 / WUF-121 — modeless Find workbench for the desktop shell.
  *
- * Tabs: 查找 | 替换 | Intent. Intent uses local RegexDraft (NL→pattern) and
- * hit marks that never write Buffer. Bottom-bar Patch Intent / Action list
- * stay on the main surface. Surface/marks are injectable so CI never needs
- * real OS dialog pixels.
+ * Find / replace / Intent (+ Actions) live here as tabs. Geometry: default
+ * center, title-bar drag, client clamp, in-session position memory (cleared
+ * on process restart). Buffer writes only via replaceAccept / Intent Accept.
+ * Surface is injectable so CI never needs real OS dialog pixels.
  */
+
+import {
+  applyDrag,
+  centerWorkbench,
+  clampWorkbench,
+  type ClientSize,
+  type WorkbenchPoint,
+  type WorkbenchSize,
+} from "./find-workbench-geometry.ts";
 
 export type FindFlags = {
   i?: boolean;
   m?: boolean;
   s?: boolean;
 };
-
-export type FindTab = "find" | "replace" | "intent";
-
-export const FIND_TABS: readonly FindTab[] = ["find", "replace", "intent"];
-
-/** Default size above which marks may degrade to the visible window. */
-export const FIND_MARKS_LARGE_BUFFER = 256_000;
 
 export type FindDialogFields = {
   pattern: string;
@@ -50,14 +52,33 @@ export type FindParams = {
   scope?: FindScope;
 };
 
-export type FindIntentTabState = {
-  utterance: string;
-  /** Same source as find-tab pattern. */
-  pattern: string;
-  hitCount: number;
+/** Workbench tabs: 查找 | 替换 | Intent (Actions nest under Intent). */
+export type WorkbenchTab = "find" | "replace" | "intent";
+
+export type WorkbenchGeometry = WorkbenchPoint;
+
+export type FindMarksState = {
   marksActive: boolean;
+  hitCount: number;
   /** True when marks were limited to a visible window on a large Buffer. */
-  degraded: boolean;
+  degraded?: boolean;
+};
+
+/** Default size above which marks may degrade to the visible window. */
+export const FIND_MARKS_LARGE_BUFFER = 256_000;
+
+/** Visual mark layer — never mutates Buffer text. */
+export type FindMarksSurface = {
+  applyMarks(hits: FindHit[]): void;
+  clearMarks(): void;
+};
+
+export type FindDialogOptions = {
+  marks?: FindMarksSurface;
+  /** Buffer length probe for large-Buffer mark degradation. */
+  getBufferLength?: () => Promise<number> | number;
+  getVisibleRange?: () => FindScope | undefined;
+  largeBufferThreshold?: number;
 };
 
 export type FindDialogPort = {
@@ -76,9 +97,9 @@ export type FindDialogPort = {
   applyDraft(draft: FindDraft): Promise<void>;
 };
 
-export type FindDialogPresentMeta = {
-  tab: FindTab;
-  intent: FindIntentTabState;
+export type PresentOpts = {
+  tab: WorkbenchTab;
+  geometry: WorkbenchGeometry;
 };
 
 /**
@@ -86,29 +107,23 @@ export type FindDialogPresentMeta = {
  * the desktop wires these to the modeless dialog DOM (not showModal).
  */
 export type FindDialogSurface = {
-  present(fields: FindDialogFields, meta?: FindDialogPresentMeta): void;
+  present(fields: FindDialogFields, opts: PresentOpts): void;
   dismiss(): void;
   focusPattern(): void;
-  focusIntentUtterance?(): void;
+  focusIntent?(): void;
+  setTab?(tab: WorkbenchTab): void;
+  setGeometry?(geometry: WorkbenchGeometry): void;
+  /**
+   * Size of the dialog after the given tab is shown. Called after `present` so
+   * Intent (taller) vs Find heights are measured correctly for centering.
+   */
+  measureSize?(tab: WorkbenchTab): WorkbenchSize;
 };
 
-/** Visual mark layer — never mutates Buffer text. */
-export type FindMarksSurface = {
-  applyMarks(hits: FindHit[]): void;
-  clearMarks(): void;
-};
-
-export type RegexDraftEngine = {
-  build(utterance: string): FindDraft;
-};
-
-export type FindDialogOptions = {
-  marks?: FindMarksSurface;
-  draftEngine?: RegexDraftEngine;
-  /** Buffer length probe for large-Buffer mark degradation. */
-  getBufferLength?: () => Promise<number> | number;
-  getVisibleRange?: () => FindScope | undefined;
-  largeBufferThreshold?: number;
+export type OpenDialogOpts = {
+  tab?: WorkbenchTab;
+  client?: ClientSize;
+  size?: WorkbenchSize;
 };
 
 function flagsFromDraftString(flags: string | undefined): FindFlags {
@@ -120,14 +135,6 @@ function flagsFromDraftString(flags: string | undefined): FindFlags {
   };
 }
 
-function flagsToDraftString(flags: FindFlags): string | undefined {
-  let out = "";
-  if (flags.i) out += "i";
-  if (flags.m) out += "m";
-  if (flags.s) out += "s";
-  return out.length > 0 ? out : undefined;
-}
-
 function copyFields(fields: FindDialogFields): FindDialogFields {
   return {
     pattern: fields.pattern,
@@ -136,25 +143,33 @@ function copyFields(fields: FindDialogFields): FindDialogFields {
   };
 }
 
+const DEFAULT_CLIENT: ClientSize = { widthPx: 1024, heightPx: 768 };
+const DEFAULT_SIZE: WorkbenchSize = { widthPx: 576, heightPx: 420 };
+
 /**
- * Controllable modeless Find dialog. Opening never blocks the editor;
- * RegexDraft fill opens on the Intent tab; replace still goes through Accept.
+ * Controllable modeless Find workbench. Opening never blocks the editor;
+ * RegexDraft fill opens + focuses Intent tab; replace still goes through Accept.
  */
 export class FindDialog {
   private open = false;
-  private tab: FindTab = "find";
-  private utterance = "";
-  private hitCount = 0;
-  private marksActive = false;
-  private degraded = false;
   private fields: FindDialogFields = {
     pattern: "",
     replacement: "",
     flags: {},
   };
   private scope: FindScope = { kind: "buffer" };
-  private readonly marks: FindMarksSurface | undefined;
-  private readonly draftEngine: RegexDraftEngine | undefined;
+  private tab: WorkbenchTab = "find";
+  private geometry: WorkbenchGeometry = { leftPx: 0, topPx: 0 };
+  /** In-memory only — undefined until the user drags (or after restart). */
+  private sessionMemory: WorkbenchGeometry | undefined;
+  private marks: FindMarksState = {
+    marksActive: false,
+    hitCount: 0,
+    degraded: false,
+  };
+  private lastClient: ClientSize = DEFAULT_CLIENT;
+  private lastSize: WorkbenchSize = DEFAULT_SIZE;
+  private readonly marksSurface: FindMarksSurface | undefined;
   private readonly getBufferLength: (() => Promise<number> | number) | undefined;
   private readonly getVisibleRange: (() => FindScope | undefined) | undefined;
   private readonly largeBufferThreshold: number;
@@ -164,8 +179,7 @@ export class FindDialog {
     private readonly surface: FindDialogSurface,
     options: FindDialogOptions = {},
   ) {
-    this.marks = options.marks;
-    this.draftEngine = options.draftEngine;
+    this.marksSurface = options.marks;
     this.getBufferLength = options.getBufferLength;
     this.getVisibleRange = options.getVisibleRange;
     this.largeBufferThreshold =
@@ -181,56 +195,45 @@ export class FindDialog {
     return false;
   }
 
-  tabs(): readonly FindTab[] {
-    return FIND_TABS;
-  }
-
-  hasIntentTab(): boolean {
+  /**
+   * Workbench hosts Intent + Actions UI (migrated off the shell bottom bar).
+   * Geometry / tabs / marks live on this seam.
+   */
+  hostsIntentOrAction(): boolean {
     return true;
   }
 
-  /**
-   * Bottom-bar Patch Intent stays on the main surface.
-   * (Legacy name kept for older callers — same meaning.)
-   */
-  hostsIntentOrAction(): boolean {
-    return this.hostsBottomBarPatchIntent() || this.hostsActionList();
-  }
-
-  hostsBottomBarPatchIntent(): boolean {
+  /** No install-level persistence key — session memory is process-local. */
+  hasPersistentGeometryKey(): boolean {
     return false;
   }
 
-  hostsActionList(): boolean {
-    return false;
-  }
-
-  getActiveTab(): FindTab {
+  getTab(): WorkbenchTab {
     return this.tab;
   }
 
-  setActiveTab(tab: FindTab): void {
+  setTab(tab: WorkbenchTab): void {
     this.tab = tab;
-    if (this.open) this.syncPresent();
+    if (this.open) {
+      this.surface.setTab?.(tab);
+      this.surface.present(this.getFields(), this.presentOpts());
+    }
+  }
+
+  getGeometry(): WorkbenchGeometry {
+    return { ...this.geometry };
+  }
+
+  getSessionGeometry(): WorkbenchGeometry | undefined {
+    return this.sessionMemory ? { ...this.sessionMemory } : undefined;
+  }
+
+  getMarksState(): FindMarksState {
+    return { ...this.marks };
   }
 
   getFields(): FindDialogFields {
     return copyFields(this.fields);
-  }
-
-  getIntentState(): FindIntentTabState {
-    return {
-      utterance: this.utterance,
-      pattern: this.fields.pattern,
-      hitCount: this.hitCount,
-      marksActive: this.marksActive,
-      degraded: this.degraded,
-    };
-  }
-
-  setUtterance(utterance: string): void {
-    this.utterance = utterance;
-    if (this.open) this.syncPresent();
   }
 
   setFields(fields: Partial<FindDialogFields>): void {
@@ -241,101 +244,105 @@ export class FindDialog {
     if (fields.flags !== undefined) {
       this.fields.flags = { ...fields.flags };
     }
-    if (this.open) this.syncPresent();
+    if (this.open) {
+      this.surface.present(this.getFields(), this.presentOpts());
+    }
   }
 
   setScope(scope: FindScope): void {
     this.scope = scope;
   }
 
-  openDialog(tab: FindTab = "find"): void {
-    this.tab = tab;
+  openDialog(opts: OpenDialogOpts = {}): void {
+    if (opts.client) this.lastClient = opts.client;
+    if (opts.size) this.lastSize = opts.size;
+    if (opts.tab) this.tab = opts.tab;
     this.open = true;
-    this.syncPresent();
+    // Present the target tab first so measureSize sees Intent (taller) layout.
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
+    this.surface.present(this.getFields(), this.presentOpts());
+    this.relayoutAfterPresent();
   }
 
   closeDialog(): void {
     if (!this.open) return;
-    this.clearMarks();
     this.open = false;
+    this.clearMarks();
     this.surface.dismiss();
   }
 
   focusPattern(): void {
-    if (!this.open) this.openDialog("find");
+    if (!this.open) this.openDialog({ tab: "find" });
     this.surface.focusPattern();
   }
 
-  focusIntentUtterance(): void {
-    if (!this.open) this.openDialog("intent");
-    else this.setActiveTab("intent");
-    this.surface.focusIntentUtterance?.();
+  focusIntent(): void {
+    if (!this.open) this.openDialog({ tab: "intent" });
+    else this.setTab("intent");
+    this.focusWorkbenchField();
   }
 
   /**
-   * Fill from Intent RegexDraft, open on Intent tab.
+   * Title-bar drag: apply delta, clamp to client, remember for this session.
+   */
+  dragTitleBar(
+    delta: { dx: number; dy: number },
+    client: ClientSize = this.lastClient,
+    size: WorkbenchSize = this.lastSize,
+  ): WorkbenchGeometry {
+    this.lastClient = client;
+    this.lastSize = size;
+    const next = clampWorkbench(
+      applyDrag(this.geometry, delta),
+      size,
+      client,
+    );
+    this.geometry = next;
+    this.sessionMemory = { ...next };
+    if (this.open) {
+      this.surface.setGeometry?.(next);
+      this.surface.present(this.getFields(), this.presentOpts());
+    }
+    return { ...next };
+  }
+
+  /**
+   * Fill from Intent RegexDraft, open Intent tab + focus.
    * Does not Accept into Buffer — only loads Find fields via the port.
    */
   async applyRegexDraft(
     draft: FindDraft,
-    opts: { utterance?: string } = {},
+    opts: Pick<OpenDialogOpts, "client" | "size"> = {},
   ): Promise<void> {
+    if (opts.client) this.lastClient = opts.client;
+    if (opts.size) this.lastSize = opts.size;
     await this.port.applyDraft(draft);
     this.fields = {
       pattern: draft.pattern,
       replacement: draft.replacement ?? "",
       flags: flagsFromDraftString(draft.flags),
     };
-    if (opts.utterance !== undefined) this.utterance = opts.utterance;
     this.tab = "intent";
     this.open = true;
-    this.syncPresent();
-    if (this.surface.focusIntentUtterance) {
-      this.surface.focusIntentUtterance();
-    } else {
-      this.surface.focusPattern();
-    }
+    // Present Intent tab first, then remeasure — do not center on Find height.
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
+    this.surface.present(this.getFields(), this.presentOpts());
+    this.relayoutAfterPresent();
+    // Explicit branch: void-returning focusIntent must not fall through via `??`.
+    this.focusWorkbenchField();
   }
 
   /**
-   * Generate pattern from utterance via local RegexDraft, then mark hits.
+   * Mark hits for the current pattern on the active Buffer (via find port).
+   * Does not write Buffer text. Large buffers may degrade to the visible window.
    */
-  async generate(): Promise<{ ok: true } | { ok: false; reason: string }> {
-    if (!this.draftEngine) {
-      return { ok: false, reason: "no_draft_engine" };
-    }
-    const trimmed = this.utterance.trim();
-    if (trimmed.length === 0) {
+  async markHits(extra: FindParams = {}): Promise<FindMarksState> {
+    if (!this.fields.pattern && !extra.pattern) {
       this.clearMarks();
-      return { ok: false, reason: "empty_utterance" };
-    }
-    const draft = this.draftEngine.build(trimmed);
-    this.fields.pattern = draft.pattern;
-    if (draft.replacement !== undefined) {
-      this.fields.replacement = draft.replacement;
-    }
-    if (draft.flags !== undefined) {
-      this.fields.flags = flagsFromDraftString(draft.flags);
-    }
-    await this.port.applyDraft({
-      pattern: draft.pattern,
-      replacement: draft.replacement,
-      flags: draft.flags,
-    });
-    if (this.open) this.syncPresent();
-    await this.remark();
-    return { ok: true };
-  }
-
-  /** Re-scan Buffer with the current pattern and refresh marks. */
-  async remark(): Promise<void> {
-    const pattern = this.fields.pattern;
-    if (!pattern) {
-      this.clearMarks();
-      return;
+      return this.getMarksState();
     }
 
-    let scope = this.scope;
+    let scope = extra.scope ?? this.scope;
     let degraded = false;
     if (this.getBufferLength) {
       const len = await this.getBufferLength();
@@ -348,53 +355,29 @@ export class FindDialog {
       }
     }
 
-    const found = await this.port.find({
-      pattern,
-      flags: this.fields.flags,
-      scope,
-    });
-    this.hitCount = found.count;
-    this.degraded = degraded;
-    this.marksActive = found.count > 0;
-    if (this.marksActive) {
-      this.marks?.applyMarks(found.hits);
-    } else {
-      this.marks?.clearMarks();
-    }
-    if (this.open) this.syncPresent();
-  }
-
-  clearMarks(): void {
-    this.marks?.clearMarks();
-    this.marksActive = false;
-    this.hitCount = 0;
-    this.degraded = false;
-    if (this.open) this.syncPresent();
-  }
-
-  /** Buffer content changed — marks must not linger on stale text. */
-  notifyBufferEdited(): void {
-    this.clearMarks();
-  }
-
-  canSaveAsAction(): boolean {
-    return this.tab === "intent" && this.fields.pattern.trim().length > 0;
-  }
-
-  getDraftForSave(): FindDraft | null {
-    if (!this.canSaveAsAction()) return null;
-    return {
-      pattern: this.fields.pattern,
-      replacement: this.fields.replacement,
-      flags: flagsToDraftString(this.fields.flags),
+    const found = await this.port.find(this.params({ ...extra, scope }));
+    this.marks = {
+      marksActive: found.count > 0,
+      hitCount: found.count,
+      degraded,
     };
+    if (this.marks.marksActive) {
+      this.marksSurface?.applyMarks(found.hits);
+    } else {
+      this.marksSurface?.clearMarks();
+    }
+    return this.getMarksState();
   }
 
-  private syncPresent(): void {
-    this.surface.present(this.getFields(), {
-      tab: this.tab,
-      intent: this.getIntentState(),
-    });
+  /** Clear marks (dismiss / explicit clear / Buffer edit). */
+  clearMarks(): void {
+    this.marksSurface?.clearMarks();
+    this.marks = { marksActive: false, hitCount: 0, degraded: false };
+  }
+
+  /** Buffer content changed — drop marks so highlights do not go stale. */
+  onBufferEdited(): void {
+    this.clearMarks();
   }
 
   private params(extra: FindParams = {}): FindParams {
@@ -416,5 +399,41 @@ export class FindDialog {
 
   async replaceAccept(extra: FindParams = {}) {
     return this.port.replaceAccept(this.params(extra));
+  }
+
+  private presentOpts(): PresentOpts {
+    return { tab: this.tab, geometry: { ...this.geometry } };
+  }
+
+  /** Prefer Intent input when available; never call both. */
+  private focusWorkbenchField(): void {
+    if (typeof this.surface.focusIntent === "function") {
+      this.surface.focusIntent();
+      return;
+    }
+    this.surface.focusPattern();
+  }
+
+  /**
+   * After the target tab is visible, remeasure and re-center/clamp so Intent
+   * openings do not use the shorter Find-panel height.
+   */
+  private relayoutAfterPresent(): void {
+    const measured = this.surface.measureSize?.(this.tab);
+    if (!measured) return;
+    this.lastSize = measured;
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
+    this.surface.setGeometry?.(this.geometry);
+    this.surface.present(this.getFields(), this.presentOpts());
+  }
+
+  private resolveGeometry(
+    client: ClientSize,
+    size: WorkbenchSize,
+  ): WorkbenchGeometry {
+    if (this.sessionMemory) {
+      return clampWorkbench(this.sessionMemory, size, client);
+    }
+    return centerWorkbench(client, size);
   }
 }
