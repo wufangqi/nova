@@ -1,14 +1,16 @@
 /**
- * WUF-107 contract: FindBar as modeless dialog + RegexDraft open/focus.
+ * WUF-107 / WUF-120 / WUF-121 contract: Find workbench (tabs, geometry, Intent).
  *
  * Seam: `FindDialog` (desktop/src/find-dialog.ts) driven through an injectable
  * FindDialogPort (IPC) + FindDialogSurface (no real OS dialog pixels).
  *
  * Acceptance:
  * - Find/replace/flags usable while dialog is open (modeless — editor not blocked)
- * - RegexDraft fill opens/focuses dialog with fields set; no Buffer write
+ * - RegexDraft fill opens Intent tab with fields set; no Buffer write
  * - Replace Accept still goes through port → Intent Accept; never silent Buffer write
- * - Intent/Action stay on the main surface (FindDialog does not host them)
+ * - Workbench hosts Intent/Actions (migrated off shell bottom bar)
+ * - Center / drag / clamp / session memory; no install-level geometry key
+ * - Marks activate from pattern hits; clear on dismiss / buffer edit
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -19,13 +21,19 @@ import {
   type FindDialogSurface,
   type FindDraft,
   type FindHit,
+  type PresentOpts,
+  type WorkbenchGeometry,
+  type WorkbenchTab,
 } from "../desktop/src/find-dialog.ts";
 import { IntentIpcHost } from "../src/ipc/host.js";
 
 type SurfaceLog = {
-  presents: FindDialogFields[];
+  presents: Array<{ fields: FindDialogFields; opts: PresentOpts }>;
   dismisses: number;
   focusPatternCalls: number;
+  focusIntentCalls: number;
+  tabs: WorkbenchTab[];
+  geometries: WorkbenchGeometry[];
 };
 
 function recordingSurface(): FindDialogSurface & { log: SurfaceLog } {
@@ -33,17 +41,35 @@ function recordingSurface(): FindDialogSurface & { log: SurfaceLog } {
     presents: [],
     dismisses: 0,
     focusPatternCalls: 0,
+    focusIntentCalls: 0,
+    tabs: [],
+    geometries: [],
   };
   return {
     log,
-    present(fields) {
-      log.presents.push({ ...fields, flags: { ...fields.flags } });
+    present(fields, opts) {
+      log.presents.push({
+        fields: { ...fields, flags: { ...fields.flags } },
+        opts: {
+          tab: opts.tab,
+          geometry: { ...opts.geometry },
+        },
+      });
     },
     dismiss() {
       log.dismisses += 1;
     },
     focusPattern() {
       log.focusPatternCalls += 1;
+    },
+    focusIntent() {
+      log.focusIntentCalls += 1;
+    },
+    setTab(tab) {
+      log.tabs.push(tab);
+    },
+    setGeometry(geometry) {
+      log.geometries.push({ ...geometry });
     },
   };
 }
@@ -87,6 +113,9 @@ function portFromHost(host: IntentIpcHost): FindDialogPort {
   };
 }
 
+const CLIENT = { widthPx: 1000, heightPx: 800 };
+const SIZE = { widthPx: 400, heightPx: 300 };
+
 describe("Find dialog is modeless — Find/replace/flags while editor stays editable", () => {
   it("openDialog presents fields and does not block the editor", async () => {
     const host = new IntentIpcHost();
@@ -96,11 +125,11 @@ describe("Find dialog is modeless — Find/replace/flags while editor stays edit
     assert.equal(dialog.isOpen(), false);
     assert.equal(dialog.blocksEditor(), false);
 
-    dialog.openDialog();
+    dialog.openDialog({ client: CLIENT, size: SIZE });
     assert.equal(dialog.isOpen(), true);
     assert.equal(dialog.blocksEditor(), false);
     assert.equal(surface.log.presents.length, 1);
-    assert.deepEqual(surface.log.presents[0], dialog.getFields());
+    assert.deepEqual(surface.log.presents[0]!.fields, dialog.getFields());
 
     dialog.setFields({
       pattern: "alpha",
@@ -111,7 +140,6 @@ describe("Find dialog is modeless — Find/replace/flags while editor stays edit
     assert.equal(dialog.getFields().replacement, "beta");
     assert.equal(dialog.getFields().flags.i, true);
     assert.equal(dialog.getFields().flags.s, true);
-    // Modeless: still not blocking after field edits.
     assert.equal(dialog.blocksEditor(), false);
   });
 
@@ -128,7 +156,7 @@ describe("Find dialog is modeless — Find/replace/flags while editor stays edit
 
     const surface = recordingSurface();
     const dialog = new FindDialog(portFromHost(host), surface);
-    dialog.openDialog();
+    dialog.openDialog({ client: CLIENT, size: SIZE });
     dialog.setFields({
       pattern: "cat",
       replacement: "owl",
@@ -148,8 +176,8 @@ describe("Find dialog is modeless — Find/replace/flags while editor stays edit
   });
 });
 
-describe("RegexDraft opens/focuses Find dialog with fields filled", () => {
-  it("applyRegexDraft fills fields, presents + focuses, leaves Buffer unchanged", async () => {
+describe("RegexDraft opens Intent tab with fields filled", () => {
+  it("applyRegexDraft fills fields, presents Intent tab, leaves Buffer unchanged", async () => {
     const host = new IntentIpcHost();
     const evoked = await host.handle({ method: "evoke", params: {} });
     assert.equal(evoked.ok, true);
@@ -174,9 +202,11 @@ describe("RegexDraft opens/focuses Find dialog with fields filled", () => {
     await dialog.applyRegexDraft(previewed.result.preview.draft);
 
     assert.equal(dialog.isOpen(), true);
+    assert.equal(dialog.getTab(), "intent");
     assert.equal(dialog.getFields().pattern, "a(\\d)");
     assert.equal(surface.log.presents.length, 1);
-    assert.equal(surface.log.focusPatternCalls, 1);
+    assert.equal(surface.log.presents[0]!.opts.tab, "intent");
+    assert.equal(surface.log.focusIntentCalls, 1);
     assert.equal(await sliceAll(host, bufferId), "a1 b2 a3");
 
     const found = await dialog.find();
@@ -212,12 +242,127 @@ describe("Replace Accept stays on Patch preview seam — no silent Buffer write"
   });
 });
 
-describe("Intent/Action stay on main surface", () => {
-  it("FindDialog does not host Intent or Action panels", () => {
+describe("Workbench hosts Intent/Actions", () => {
+  it("FindDialog hosts Intent or Action panels (shell bottom bar removed)", () => {
     const host = new IntentIpcHost();
     const surface = recordingSurface();
     const dialog = new FindDialog(portFromHost(host), surface);
-    dialog.openDialog();
-    assert.equal(dialog.hostsIntentOrAction(), false);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    assert.equal(dialog.hostsIntentOrAction(), true);
+  });
+
+  it("tabs switch among find / replace / intent", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE, tab: "find" });
+    assert.equal(dialog.getTab(), "find");
+    dialog.setTab("replace");
+    assert.equal(dialog.getTab(), "replace");
+    dialog.setTab("intent");
+    assert.equal(dialog.getTab(), "intent");
+  });
+});
+
+describe("Workbench geometry: center, drag, clamp, session memory", () => {
+  it("present centers when there is no session memory", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    assert.deepEqual(dialog.getGeometry(), { leftPx: 300, topPx: 250 });
+    assert.equal(dialog.getSessionGeometry(), undefined);
+    assert.equal(dialog.hasPersistentGeometryKey(), false);
+  });
+
+  it("drag updates geometry, clamps, and remembers for re-present", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+
+    const afterDrag = dialog.dragTitleBar({ dx: 40, dy: -20 }, CLIENT, SIZE);
+    assert.deepEqual(afterDrag, { leftPx: 340, topPx: 230 });
+    assert.deepEqual(dialog.getSessionGeometry(), afterDrag);
+
+    dialog.closeDialog();
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    assert.deepEqual(dialog.getGeometry(), afterDrag);
+  });
+
+  it("drag far off-screen is clamped so the title bar stays reachable", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE });
+    const clamped = dialog.dragTitleBar({ dx: 50_000, dy: 50_000 }, CLIENT, SIZE);
+    assert.ok(clamped.leftPx <= CLIENT.widthPx - 28);
+    assert.ok(clamped.topPx <= CLIENT.heightPx - 28);
+  });
+
+  it("a fresh FindDialog has no session memory (restart resets to center)", () => {
+    const host = new IntentIpcHost();
+    const surface = recordingSurface();
+    const first = new FindDialog(portFromHost(host), surface);
+    first.openDialog({ client: CLIENT, size: SIZE });
+    first.dragTitleBar({ dx: 80, dy: 40 }, CLIENT, SIZE);
+
+    const restarted = new FindDialog(portFromHost(host), recordingSurface());
+    restarted.openDialog({ client: CLIENT, size: SIZE });
+    assert.equal(restarted.getSessionGeometry(), undefined);
+    assert.deepEqual(restarted.getGeometry(), { leftPx: 300, topPx: 250 });
+    assert.equal(restarted.hasPersistentGeometryKey(), false);
+  });
+});
+
+describe("Marks: activate from hits; clear on dismiss / buffer edit", () => {
+  it("markHits sets marksActive + count; clearMarks and dismiss reset", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    await host.handle({
+      method: "edit_active",
+      params: { text: "cat dog cat" },
+    });
+
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.openDialog({ client: CLIENT, size: SIZE, tab: "intent" });
+    dialog.setFields({ pattern: "cat", replacement: "", flags: {} });
+
+    const marked = await dialog.markHits();
+    assert.equal(marked.marksActive, true);
+    assert.equal(marked.hitCount, 2);
+
+    dialog.clearMarks();
+    assert.equal(dialog.getMarksState().marksActive, false);
+
+    await dialog.markHits();
+    assert.equal(dialog.getMarksState().marksActive, true);
+    dialog.closeDialog();
+    assert.equal(dialog.getMarksState().marksActive, false);
+  });
+
+  it("onBufferEdited clears marks without writing Buffer", async () => {
+    const host = new IntentIpcHost();
+    const evoked = await host.handle({ method: "evoke", params: {} });
+    assert.equal(evoked.ok, true);
+    if (!evoked.ok) return;
+    const bufferId = evoked.result.buffer.id;
+    await host.handle({
+      method: "edit_active",
+      params: { text: "aa bb aa" },
+    });
+
+    const surface = recordingSurface();
+    const dialog = new FindDialog(portFromHost(host), surface);
+    dialog.setFields({ pattern: "aa", replacement: "", flags: {} });
+    await dialog.markHits();
+    assert.equal(dialog.getMarksState().hitCount, 2);
+
+    dialog.onBufferEdited();
+    assert.equal(dialog.getMarksState().marksActive, false);
+    assert.equal(await sliceAll(host, bufferId), "aa bb aa");
   });
 });

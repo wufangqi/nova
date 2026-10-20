@@ -22,6 +22,8 @@ import {
   type FindDialogFields,
   type FindDialogPort,
   type FindDialogSurface,
+  type WorkbenchGeometry,
+  type WorkbenchTab,
 } from "./find-dialog.ts";
 import { APP_PRODUCT_NAME, APP_VERSION } from "./app-meta.ts";
 import { GotoLinePopup, type GotoLinePopupSurface } from "./goto-line-popup.ts";
@@ -439,6 +441,10 @@ function writeFindFieldsToDom(fields: FindDialogFields) {
   el<HTMLInputElement>("find-flag-i").checked = !!fields.flags.i;
   el<HTMLInputElement>("find-flag-m").checked = !!fields.flags.m;
   el<HTMLInputElement>("find-flag-s").checked = !!fields.flags.s;
+  const intentPattern = document.getElementById("intent-pattern");
+  if (intentPattern instanceof HTMLInputElement) {
+    intentPattern.value = fields.pattern;
+  }
 }
 
 function readFindFieldsFromDom(): FindDialogFields {
@@ -453,18 +459,96 @@ function readFindFieldsFromDom(): FindDialogFields {
   };
 }
 
+function applyWorkbenchGeometry(geometry: WorkbenchGeometry) {
+  const dialog = el<HTMLElement>("find-dialog");
+  dialog.style.left = `${geometry.leftPx}px`;
+  dialog.style.top = `${geometry.topPx}px`;
+  dialog.style.right = "auto";
+  dialog.style.bottom = "auto";
+}
+
+function syncWorkbenchTabUi(tab: WorkbenchTab) {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".find-tab")) {
+    const selected = btn.dataset.tab === tab;
+    btn.setAttribute("aria-selected", selected ? "true" : "false");
+  }
+  const findReplace = el<HTMLElement>("find-panel-find-replace");
+  const intent = el<HTMLElement>("find-panel-intent");
+  const showFindReplace = tab === "find" || tab === "replace";
+  findReplace.hidden = !showFindReplace;
+  intent.hidden = tab !== "intent";
+
+  const replacementField = el<HTMLElement>("find-replacement-field");
+  const previewBtn = el<HTMLButtonElement>("find-preview-replace");
+  const acceptBtn = el<HTMLButtonElement>("find-replace-accept");
+  const findBtn = el<HTMLButtonElement>("find-go");
+  const onReplace = tab === "replace";
+  replacementField.hidden = !onReplace;
+  previewBtn.hidden = !onReplace;
+  acceptBtn.hidden = !onReplace;
+  findBtn.hidden = onReplace;
+}
+
+function updateIntentHitCountLabel() {
+  const marks = findDialog.getMarksState();
+  const label = document.getElementById("intent-hit-count");
+  if (label) {
+    label.textContent = `${marks.hitCount} hit${marks.hitCount === 1 ? "" : "s"}`;
+  }
+}
+
+function workbenchClientSize(): { widthPx: number; heightPx: number } {
+  const app = document.querySelector(".app");
+  if (app instanceof HTMLElement) {
+    return { widthPx: app.clientWidth, heightPx: app.clientHeight };
+  }
+  return { widthPx: window.innerWidth, heightPx: window.innerHeight };
+}
+
+function workbenchDialogSize(): { widthPx: number; heightPx: number } {
+  const dialog = el<HTMLElement>("find-dialog");
+  // Hidden nodes report 0×0 — measure with a brief invisible reveal.
+  const wasHidden = dialog.hidden;
+  if (wasHidden) {
+    dialog.style.visibility = "hidden";
+    dialog.hidden = false;
+  }
+  const widthPx = dialog.offsetWidth || Math.min(576, window.innerWidth - 24);
+  const heightPx = dialog.offsetHeight || 420;
+  if (wasHidden) {
+    dialog.hidden = true;
+    dialog.style.visibility = "";
+  }
+  return { widthPx, heightPx };
+}
+
 const findSurface: FindDialogSurface = {
-  present(fields) {
+  present(fields, opts) {
     writeFindFieldsToDom(fields);
+    syncWorkbenchTabUi(opts.tab);
+    applyWorkbenchGeometry(opts.geometry);
     el<HTMLElement>("find-dialog").hidden = false;
+    updateIntentHitCountLabel();
   },
   dismiss() {
     el<HTMLElement>("find-dialog").hidden = true;
+    updateIntentHitCountLabel();
   },
   focusPattern() {
     const input = el<HTMLInputElement>("find-pattern");
     input.focus();
     input.select();
+  },
+  focusIntent() {
+    const input = el<HTMLInputElement>("intent-input");
+    input.focus();
+    input.select();
+  },
+  setTab(tab) {
+    syncWorkbenchTabUi(tab);
+  },
+  setGeometry(geometry) {
+    applyWorkbenchGeometry(geometry);
   },
 };
 
@@ -825,8 +909,13 @@ async function fillFindBarFromDraft(draft: {
   replacement?: string;
   flags?: string;
 }) {
-  // Opens/focuses the modeless Find dialog; apply_draft stays on the IPC seam.
-  await findDialog.applyRegexDraft(draft);
+  // Opens Intent tab; apply_draft stays on the IPC seam; mark hits (no Buffer write).
+  await findDialog.applyRegexDraft(draft, {
+    client: workbenchClientSize(),
+    size: workbenchDialogSize(),
+  });
+  await findDialog.markHits();
+  updateIntentHitCountLabel();
 }
 
 function renderFindHits(hits: FindHit[], count: number) {
@@ -1641,9 +1730,101 @@ async function selectSuggestion(suggestion: Suggestion) {
   }
 }
 
-function openFindChrome(): void {
+function openFindChrome(opts: { tab?: WorkbenchTab } = {}): void {
+  const tab = opts.tab ?? "find";
   findDialog.setFields(readFindFieldsFromDom());
-  findDialog.focusPattern();
+  findDialog.openDialog({
+    tab,
+    client: workbenchClientSize(),
+    size: workbenchDialogSize(),
+  });
+  if (tab === "intent") {
+    findDialog.focusIntent();
+  } else {
+    findDialog.focusPattern();
+  }
+}
+
+function mountFindWorkbenchChrome(): void {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(".find-tab")) {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab as WorkbenchTab | undefined;
+      if (!tab) return;
+      findDialog.setFields(readFindFieldsFromDom());
+      findDialog.setTab(tab);
+    });
+  }
+
+  const chrome = el<HTMLElement>("find-dialog-chrome");
+  let pointerActive = false;
+  let dragging = false;
+  let lastPointer: { x: number; y: number } | null = null;
+  let pressOrigin: { x: number; y: number } | null = null;
+
+  chrome.addEventListener("pointerdown", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    if (target?.closest("#find-close")) return;
+    if (ev.button !== 0) return;
+    pointerActive = true;
+    dragging = false;
+    pressOrigin = { x: ev.clientX, y: ev.clientY };
+    lastPointer = { x: ev.clientX, y: ev.clientY };
+    chrome.setPointerCapture(ev.pointerId);
+  });
+  chrome.addEventListener("pointermove", (ev) => {
+    if (!pointerActive || !pressOrigin || !lastPointer) return;
+    if (!dragging) {
+      const totalDx = ev.clientX - pressOrigin.x;
+      const totalDy = ev.clientY - pressOrigin.y;
+      if (Math.hypot(totalDx, totalDy) < TITLE_DRAG_THRESHOLD_PX) return;
+      dragging = true;
+      chrome.classList.add("find-dialog-dragging");
+    }
+    const dx = ev.clientX - lastPointer.x;
+    const dy = ev.clientY - lastPointer.y;
+    lastPointer = { x: ev.clientX, y: ev.clientY };
+    findDialog.dragTitleBar(
+      { dx, dy },
+      workbenchClientSize(),
+      workbenchDialogSize(),
+    );
+  });
+  const endDrag = (ev: PointerEvent) => {
+    if (chrome.hasPointerCapture(ev.pointerId)) {
+      chrome.releasePointerCapture(ev.pointerId);
+    }
+    pointerActive = false;
+    dragging = false;
+    lastPointer = null;
+    pressOrigin = null;
+    chrome.classList.remove("find-dialog-dragging");
+  };
+  chrome.addEventListener("pointerup", endDrag);
+  chrome.addEventListener("pointercancel", endDrag);
+
+  el<HTMLButtonElement>("intent-mark").addEventListener("click", () => {
+    const pattern = el<HTMLInputElement>("intent-pattern").value;
+    el<HTMLInputElement>("find-pattern").value = pattern;
+    findDialog.setFields(readFindFieldsFromDom());
+    void findDialog.markHits().then((marks) => {
+      updateIntentHitCountLabel();
+      setStatus(
+        marks.marksActive
+          ? `Marked ${marks.hitCount} hit${marks.hitCount === 1 ? "" : "s"}`
+          : "No hits to mark",
+      );
+    });
+  });
+  el<HTMLButtonElement>("intent-clear-marks").addEventListener("click", () => {
+    findDialog.clearMarks();
+    updateIntentHitCountLabel();
+    setStatus("Marks cleared");
+  });
+  el<HTMLInputElement>("intent-pattern").addEventListener("change", () => {
+    el<HTMLInputElement>("find-pattern").value =
+      el<HTMLInputElement>("intent-pattern").value;
+    findDialog.setFields(readFindFieldsFromDom());
+  });
 }
 
 function closeChromeMenus(): void {
@@ -1753,7 +1934,8 @@ window.addEventListener("DOMContentLoaded", () => {
     open: () => openPath(),
     save: () => save(),
     save_as: () => saveAsPath(),
-    find: () => openFindChrome(),
+    find: () => openFindChrome({ tab: "find" }),
+    intent: () => openFindChrome({ tab: "intent" }),
     demo: () => runVisualDemo().catch((err) => setStatus(String(err))),
     about: () => openAboutDialog(),
     // Same three-way ClosePrompter path as the tab × button.
@@ -1762,6 +1944,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   mountShellMenus(shellHandlers);
   mountTitleChrome();
+  mountFindWorkbenchChrome();
 
   virtualEditor = new VirtualEditor(
     el("editor-viewport"),
@@ -1782,6 +1965,8 @@ window.addEventListener("DOMContentLoaded", () => {
         renderTabs(result.tabs);
         activeId = result.buffer.id;
         await syncTitleChrome(result.tabs.find((t) => t.active));
+        findDialog.onBufferEdited();
+        updateIntentHitCountLabel();
         // Metrics refresh after VirtualEditor updates lineCount (see flushEdit);
         // also refresh here for length/caret when no further selection event fires.
         void refreshStatusMetrics();
@@ -1848,6 +2033,12 @@ window.addEventListener("DOMContentLoaded", () => {
       gotoLinePopup.closePopup();
       return;
     }
+    if (ev.key === "Escape" && findDialog.isOpen()) {
+      ev.preventDefault();
+      findDialog.closeDialog();
+      updateIntentHitCountLabel();
+      return;
+    }
     const shellAction = resolveShellShortcut(ev);
     if (shellAction) {
       ev.preventDefault();
@@ -1890,6 +2081,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   el<HTMLButtonElement>("find-close").addEventListener("click", () => {
     findDialog.closeDialog();
+    updateIntentHitCountLabel();
   });
   el<HTMLButtonElement>("find-go").addEventListener("click", () => {
     findDialog.setFields(readFindFieldsFromDom());

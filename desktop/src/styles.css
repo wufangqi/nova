@@ -22,11 +22,20 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto auto auto auto;
+  /* chrome + editor 1fr + status-bar; overlays (find/goto) are absolute. */
+  grid-template-rows: auto auto auto 1fr auto;
   /* Definite height so the middle 1fr editor track fills the window. */
   height: 100vh;
   min-height: 100vh;
   position: relative;
+}
+
+/* Overlays span the app box without consuming grid tracks. */
+.app > .goto-line-popup,
+.app > .find-dialog,
+.app > .about-dialog {
+  grid-row: 1 / -1;
+  grid-column: 1;
 }
 
 .title-chrome {
@@ -466,17 +475,22 @@ button.close-prompt-secondary {
   background: #fff;
 }
 
-/* Modeless Find window — floats over chrome; does not block the editor. */
+/* Modeless Find workbench — left/top geometry; does not block the editor. */
 .find-dialog {
   position: absolute;
   z-index: 20;
-  right: 0.75rem;
-  bottom: 8.5rem;
+  /* left/top set by FindDialogSurface; defaults only until first present. */
+  left: 0;
+  top: 0;
   width: min(36rem, calc(100% - 1.5rem));
+  max-height: min(36rem, calc(100% - 2rem));
+  display: flex;
+  flex-direction: column;
   border: 1px solid #8a8478;
   border-radius: 4px;
   background: #e2e6e0;
   box-shadow: 0 4px 18px rgba(28, 28, 28, 0.18);
+  overflow: hidden;
 }
 
 .find-dialog[hidden] {
@@ -492,8 +506,44 @@ button.close-prompt-secondary {
   background: #cfd4ce;
   border-bottom: 1px solid #bdb7aa;
   border-radius: 4px 4px 0 0;
-  cursor: default;
+  cursor: grab;
   user-select: none;
+  flex: 0 0 auto;
+}
+
+.find-dialog-chrome.find-dialog-dragging {
+  cursor: grabbing;
+}
+
+.find-workbench-tabs {
+  display: flex;
+  gap: 0;
+  flex: 0 0 auto;
+  border-bottom: 1px solid #bdb7aa;
+  background: #d8ddd7;
+}
+
+.find-tab {
+  padding: 0.35rem 0.85rem;
+  border: none;
+  border-right: 1px solid #bdb7aa;
+  border-radius: 0;
+  background: transparent;
+  color: #1c1c1c;
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.find-tab[aria-selected="true"] {
+  background: #e2e6e0;
+  font-weight: 650;
+}
+
+.find-tab-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .find-dialog-title {
@@ -578,7 +628,19 @@ button.close-prompt-secondary {
   gap: 0.4rem;
   padding: 0.55rem 0.75rem;
   background: #e6e2d9;
-  border-top: 1px solid #bdb7aa;
+  border-top: none;
+}
+
+.intent-mark-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.intent-hit-count {
+  font-size: 0.9rem;
+  color: #3d3d3d;
 }
 
 .intent-bar {
@@ -710,6 +772,12 @@ button.close-prompt-secondary {
   background: #e0e4df;
   border-top: 1px solid #bdb7aa;
   max-height: 12rem;
+}
+
+/* Intent + Actions live inside the workbench Intent tab, not the shell. */
+.find-dialog .intent-panel,
+.find-dialog .action-panel {
+  border-radius: 0;
 }
 
 .action-bar {

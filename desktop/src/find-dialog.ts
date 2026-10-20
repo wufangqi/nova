@@ -1,10 +1,20 @@
 /**
- * WUF-107 — modeless FindBar dialog for the desktop shell.
+ * WUF-107 / WUF-120 / WUF-121 — modeless Find workbench for the desktop shell.
  *
- * Find/replace/flags live here; Intent/Action stay on the main surface.
- * Buffer writes only via replaceAccept → Intent Accept (never silent).
+ * Find / replace / Intent (+ Actions) live here as tabs. Geometry: default
+ * center, title-bar drag, client clamp, in-session position memory (cleared
+ * on process restart). Buffer writes only via replaceAccept / Intent Accept.
  * Surface is injectable so CI never needs real OS dialog pixels.
  */
+
+import {
+  applyDrag,
+  centerWorkbench,
+  clampWorkbench,
+  type ClientSize,
+  type WorkbenchPoint,
+  type WorkbenchSize,
+} from "./find-workbench-geometry.ts";
 
 export type FindFlags = {
   i?: boolean;
@@ -42,6 +52,16 @@ export type FindParams = {
   scope?: FindScope;
 };
 
+/** Workbench tabs: 查找 | 替换 | Intent (Actions nest under Intent). */
+export type WorkbenchTab = "find" | "replace" | "intent";
+
+export type WorkbenchGeometry = WorkbenchPoint;
+
+export type FindMarksState = {
+  marksActive: boolean;
+  hitCount: number;
+};
+
 export type FindDialogPort = {
   find(params: FindParams): Promise<{ hits: FindHit[]; count: number }>;
   previewReplace(params: FindParams): Promise<{
@@ -58,14 +78,28 @@ export type FindDialogPort = {
   applyDraft(draft: FindDraft): Promise<void>;
 };
 
+export type PresentOpts = {
+  tab: WorkbenchTab;
+  geometry: WorkbenchGeometry;
+};
+
 /**
  * Present/dismiss/focus hooks for the shell. Tests inject a recorder;
  * the desktop wires these to the modeless dialog DOM (not showModal).
  */
 export type FindDialogSurface = {
-  present(fields: FindDialogFields): void;
+  present(fields: FindDialogFields, opts: PresentOpts): void;
   dismiss(): void;
   focusPattern(): void;
+  focusIntent?(): void;
+  setTab?(tab: WorkbenchTab): void;
+  setGeometry?(geometry: WorkbenchGeometry): void;
+};
+
+export type OpenDialogOpts = {
+  tab?: WorkbenchTab;
+  client?: ClientSize;
+  size?: WorkbenchSize;
 };
 
 function flagsFromDraftString(flags: string | undefined): FindFlags {
@@ -85,9 +119,12 @@ function copyFields(fields: FindDialogFields): FindDialogFields {
   };
 }
 
+const DEFAULT_CLIENT: ClientSize = { widthPx: 1024, heightPx: 768 };
+const DEFAULT_SIZE: WorkbenchSize = { widthPx: 576, heightPx: 420 };
+
 /**
- * Controllable modeless Find dialog. Opening never blocks the editor;
- * RegexDraft fill opens + focuses; replace still goes through Accept.
+ * Controllable modeless Find workbench. Opening never blocks the editor;
+ * RegexDraft fill opens + focuses Intent tab; replace still goes through Accept.
  */
 export class FindDialog {
   private open = false;
@@ -97,6 +134,13 @@ export class FindDialog {
     flags: {},
   };
   private scope: FindScope = { kind: "buffer" };
+  private tab: WorkbenchTab = "find";
+  private geometry: WorkbenchGeometry = { leftPx: 0, topPx: 0 };
+  /** In-memory only — undefined until the user drags (or after restart). */
+  private sessionMemory: WorkbenchGeometry | undefined;
+  private marks: FindMarksState = { marksActive: false, hitCount: 0 };
+  private lastClient: ClientSize = DEFAULT_CLIENT;
+  private lastSize: WorkbenchSize = DEFAULT_SIZE;
 
   constructor(
     private readonly port: FindDialogPort,
@@ -112,9 +156,41 @@ export class FindDialog {
     return false;
   }
 
-  /** Intent/Action panels remain on the main surface, not inside Find. */
+  /**
+   * Workbench hosts Intent + Actions UI (migrated off the shell bottom bar).
+   * Geometry / tabs / marks live on this seam.
+   */
   hostsIntentOrAction(): boolean {
+    return true;
+  }
+
+  /** No install-level persistence key — session memory is process-local. */
+  hasPersistentGeometryKey(): boolean {
     return false;
+  }
+
+  getTab(): WorkbenchTab {
+    return this.tab;
+  }
+
+  setTab(tab: WorkbenchTab): void {
+    this.tab = tab;
+    if (this.open) {
+      this.surface.setTab?.(tab);
+      this.surface.present(this.getFields(), this.presentOpts());
+    }
+  }
+
+  getGeometry(): WorkbenchGeometry {
+    return { ...this.geometry };
+  }
+
+  getSessionGeometry(): WorkbenchGeometry | undefined {
+    return this.sessionMemory ? { ...this.sessionMemory } : undefined;
+  }
+
+  getMarksState(): FindMarksState {
+    return { ...this.marks };
   }
 
   getFields(): FindDialogFields {
@@ -130,7 +206,7 @@ export class FindDialog {
       this.fields.flags = { ...fields.flags };
     }
     if (this.open) {
-      this.surface.present(this.getFields());
+      this.surface.present(this.getFields(), this.presentOpts());
     }
   }
 
@@ -138,36 +214,105 @@ export class FindDialog {
     this.scope = scope;
   }
 
-  openDialog(): void {
+  openDialog(opts: OpenDialogOpts = {}): void {
+    if (opts.client) this.lastClient = opts.client;
+    if (opts.size) this.lastSize = opts.size;
+    if (opts.tab) this.tab = opts.tab;
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
     this.open = true;
-    this.surface.present(this.getFields());
+    this.surface.present(this.getFields(), this.presentOpts());
   }
 
   closeDialog(): void {
     if (!this.open) return;
     this.open = false;
+    this.clearMarks();
     this.surface.dismiss();
   }
 
   focusPattern(): void {
-    if (!this.open) this.openDialog();
+    if (!this.open) this.openDialog({ tab: "find" });
     this.surface.focusPattern();
   }
 
+  focusIntent(): void {
+    if (!this.open) this.openDialog({ tab: "intent" });
+    else this.setTab("intent");
+    this.surface.focusIntent?.();
+  }
+
   /**
-   * Fill from Intent RegexDraft, open + focus the dialog.
+   * Title-bar drag: apply delta, clamp to client, remember for this session.
+   */
+  dragTitleBar(
+    delta: { dx: number; dy: number },
+    client: ClientSize = this.lastClient,
+    size: WorkbenchSize = this.lastSize,
+  ): WorkbenchGeometry {
+    this.lastClient = client;
+    this.lastSize = size;
+    const next = clampWorkbench(
+      applyDrag(this.geometry, delta),
+      size,
+      client,
+    );
+    this.geometry = next;
+    this.sessionMemory = { ...next };
+    if (this.open) {
+      this.surface.setGeometry?.(next);
+      this.surface.present(this.getFields(), this.presentOpts());
+    }
+    return { ...next };
+  }
+
+  /**
+   * Fill from Intent RegexDraft, open Intent tab + focus.
    * Does not Accept into Buffer — only loads Find fields via the port.
    */
-  async applyRegexDraft(draft: FindDraft): Promise<void> {
+  async applyRegexDraft(
+    draft: FindDraft,
+    opts: Pick<OpenDialogOpts, "client" | "size"> = {},
+  ): Promise<void> {
+    if (opts.client) this.lastClient = opts.client;
+    if (opts.size) this.lastSize = opts.size;
     await this.port.applyDraft(draft);
     this.fields = {
       pattern: draft.pattern,
       replacement: draft.replacement ?? "",
       flags: flagsFromDraftString(draft.flags),
     };
+    this.tab = "intent";
+    this.geometry = this.resolveGeometry(this.lastClient, this.lastSize);
     this.open = true;
-    this.surface.present(this.getFields());
-    this.surface.focusPattern();
+    this.surface.present(this.getFields(), this.presentOpts());
+    this.surface.focusIntent?.() ?? this.surface.focusPattern();
+  }
+
+  /**
+   * Mark hits for the current pattern on the active Buffer (via find port).
+   * Does not write Buffer text.
+   */
+  async markHits(extra: FindParams = {}): Promise<FindMarksState> {
+    if (!this.fields.pattern && !extra.pattern) {
+      this.marks = { marksActive: false, hitCount: 0 };
+      return this.getMarksState();
+    }
+    const found = await this.port.find(this.params(extra));
+    this.marks = {
+      marksActive: found.count > 0,
+      hitCount: found.count,
+    };
+    return this.getMarksState();
+  }
+
+  /** Clear marks (dismiss / explicit clear / Buffer edit). */
+  clearMarks(): void {
+    this.marks = { marksActive: false, hitCount: 0 };
+  }
+
+  /** Buffer content changed — drop marks so highlights do not go stale. */
+  onBufferEdited(): void {
+    this.clearMarks();
   }
 
   private params(extra: FindParams = {}): FindParams {
@@ -189,5 +334,19 @@ export class FindDialog {
 
   async replaceAccept(extra: FindParams = {}) {
     return this.port.replaceAccept(this.params(extra));
+  }
+
+  private presentOpts(): PresentOpts {
+    return { tab: this.tab, geometry: { ...this.geometry } };
+  }
+
+  private resolveGeometry(
+    client: ClientSize,
+    size: WorkbenchSize,
+  ): WorkbenchGeometry {
+    if (this.sessionMemory) {
+      return clampWorkbench(this.sessionMemory, size, client);
+    }
+    return centerWorkbench(client, size);
   }
 }
